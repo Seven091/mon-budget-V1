@@ -399,7 +399,25 @@ function App() {
           ),
         0
       );
+const fixedRemaining =
+  currentMonth.fixedExpenses.reduce(
+    (sum, item) =>
+      sum +
+      Math.max(
+        Number(item.planned || 0) -
+          Number(item.actual || 0),
+        0
+      ),
+    0
+  );
 
+const incomeDifference =
+  incomeActual -
+  incomePlanned;
+
+const fixedDifference =
+  fixedActual -
+  fixedPlanned;
 
     const envelopeBudget =
       currentMonth.envelopes.reduce(
@@ -568,12 +586,15 @@ function App() {
           100;
 
 
-    return {
-      incomePlanned,
-      incomeActual,
+   return {
+  incomePlanned,
+  incomeActual,
+  incomeDifference,
 
-      fixedPlanned,
-      fixedActual,
+  fixedPlanned,
+  fixedActual,
+  fixedRemaining,
+  fixedDifference,
 
       envelopeBudget,
       envelopeSpent,
