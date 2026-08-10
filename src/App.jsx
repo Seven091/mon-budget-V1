@@ -43,35 +43,66 @@ const formatDate = (date) =>
 /* ============================================================
    CHARGEMENT DES DONNÉES
 ============================================================ */
-
 function loadData() {
   try {
     const saved = localStorage.getItem("mon-budget-data");
 
-    if (saved) {
-      const parsed = JSON.parse(saved);
-
-      /*
-       * Sécurité :
-       * si les anciennes données sont incomplètes,
-       * on revient aux données initiales.
-       */
-      if (
-        parsed &&
-        parsed.months &&
-        parsed.currentMonth
-      ) {
-        return parsed;
-      }
+    if (!saved) {
+      return initialData;
     }
+
+    const parsed = JSON.parse(saved);
+
+    /*
+     * Vérification complète de la structure.
+     * On ne considère pas les données comme valides
+     * simplement parce que "months" et "currentMonth"
+     * existent.
+     */
+    const currentMonthKey = parsed?.currentMonth;
+    const currentMonth = parsed?.months?.[currentMonthKey];
+
+    const isValid =
+      parsed &&
+      typeof parsed === "object" &&
+      parsed.months &&
+      typeof parsed.months === "object" &&
+      currentMonthKey &&
+      currentMonth &&
+      Array.isArray(currentMonth.income) &&
+      Array.isArray(currentMonth.fixedExpenses) &&
+      Array.isArray(currentMonth.envelopes) &&
+      Array.isArray(currentMonth.transactions) &&
+      Array.isArray(currentMonth.goals);
+
+    if (isValid) {
+      return parsed;
+    }
+
+    /*
+     * Les anciennes données sont incompatibles.
+     * On supprime uniquement le cache local corrompu
+     * et on repart de la structure officielle.
+     */
+    console.warn(
+      "Anciennes données de budget incompatibles. Réinitialisation."
+    );
+
+    localStorage.removeItem("mon-budget-data");
+
+    return initialData;
+
   } catch (error) {
+
     console.error(
-      "Impossible de charger les données.",
+      "Impossible de charger les données du budget.",
       error
     );
-  }
 
-  return initialData;
+    localStorage.removeItem("mon-budget-data");
+
+    return initialData;
+  }
 }
 
 
