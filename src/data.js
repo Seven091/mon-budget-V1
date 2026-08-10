@@ -5,6 +5,10 @@ export const initialData = {
     "2026-08": {
       label: "Août 2026",
 
+      /* =====================================================
+         REVENUS
+      ===================================================== */
+
       income: [
         {
           id: "income-1",
@@ -26,12 +30,23 @@ export const initialData = {
         }
       ],
 
+      /* =====================================================
+         CHARGES FIXES
+
+         planned = montant prévu
+         actual  = montant déjà payé
+
+         Août 2026 :
+         - EDF est déjà payé
+         - les autres charges restent à payer
+      ===================================================== */
+
       fixedExpenses: [
         {
           id: "fixed-1",
           label: "Loyer",
           planned: 650,
-          actual: 650
+          actual: 0
         },
         {
           id: "fixed-2",
@@ -43,21 +58,25 @@ export const initialData = {
           id: "fixed-3",
           label: "Assurances",
           planned: 88,
-          actual: 88
+          actual: 0
         },
         {
           id: "fixed-4",
           label: "Téléphone / Internet",
           planned: 55,
-          actual: 55
+          actual: 0
         },
         {
           id: "fixed-5",
           label: "Navigo",
           planned: 86.4,
-          actual: 86.4
+          actual: 0
         }
       ],
+
+      /* =====================================================
+         ENVELOPPES
+      ===================================================== */
 
       envelopes: [
         {
@@ -104,6 +123,10 @@ export const initialData = {
         }
       ],
 
+      /* =====================================================
+         TRANSACTIONS
+      ===================================================== */
+
       transactions: [
         {
           id: "tx-1",
@@ -129,10 +152,15 @@ export const initialData = {
           label: "EDF",
           amount: 192.58,
           category: "Charges fixes",
+          fixedExpenseId: "fixed-2",
           date: "2026-08-02",
           payment: "Prélèvement"
         }
       ],
+
+      /* =====================================================
+         OBJECTIFS
+      ===================================================== */
 
       goals: [
         {
