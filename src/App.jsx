@@ -18,6 +18,13 @@ import {
 import { initialData } from "./data";
 
 /* ============================================================
+   CONFIGURATION
+============================================================ */
+
+const DATA_VERSION = 2;
+const STORAGE_KEY = "mon-budget-data-v2";
+
+/* ============================================================
    OUTILS
 ============================================================ */
 
@@ -35,61 +42,74 @@ const formatDate = (date) =>
     year: "numeric",
   }).format(new Date(date));
 
+const toNumber = (value) =>
+  Number(value) || 0;
+
 /* ============================================================
    CHARGEMENT DES DONNÉES
+
+   IMPORTANT :
+   L'ancien stockage est volontairement ignoré.
+   La V2 du stockage utilise les transactions comme
+   source de vérité pour les dépenses réelles.
 ============================================================ */
 
 function loadData() {
   try {
-    const saved = localStorage.getItem("mon-budget-data");
+    const saved =
+      localStorage.getItem(
+        STORAGE_KEY
+      );
 
     if (!saved) {
-      return initialData;
+      return {
+        ...initialData,
+        dataVersion:
+          DATA_VERSION,
+      };
     }
 
-    const parsed = JSON.parse(saved);
+    const parsed =
+      JSON.parse(saved);
 
-    const currentMonthKey = parsed?.currentMonth;
-    const currentMonth = parsed?.months?.[currentMonthKey];
-
-    const isValid =
-      parsed &&
-      typeof parsed === "object" &&
-      parsed.months &&
-      typeof parsed.months === "object" &&
-      currentMonthKey &&
-      currentMonth &&
-      Array.isArray(currentMonth.income) &&
-      Array.isArray(currentMonth.fixedExpenses) &&
-      Array.isArray(currentMonth.envelopes) &&
-      Array.isArray(currentMonth.transactions) &&
-      Array.isArray(currentMonth.goals);
-
-    if (isValid) {
-      return parsed;
+    if (
+      parsed?.dataVersion !==
+      DATA_VERSION
+    ) {
+      return {
+        ...initialData,
+        dataVersion:
+          DATA_VERSION,
+      };
     }
 
-    localStorage.removeItem("mon-budget-data");
+    return parsed;
   } catch (error) {
     console.error(
-      "Impossible de charger les données du budget.",
+      "Impossible de charger les données.",
       error
     );
 
-    localStorage.removeItem("mon-budget-data");
+    return {
+      ...initialData,
+      dataVersion:
+        DATA_VERSION,
+    };
   }
-
-  return initialData;
 }
 
 /* ============================================================
-   GESTION DES MOIS
+   MOIS
 ============================================================ */
 
-function shiftMonth(monthKey, amount) {
-  const [year, month] = monthKey
-    .split("-")
-    .map(Number);
+function shiftMonth(
+  monthKey,
+  amount
+) {
+  const [year, month] =
+    monthKey
+      .split("-")
+      .map(Number);
 
   const date = new Date(
     year,
@@ -102,10 +122,13 @@ function shiftMonth(monthKey, amount) {
   ).padStart(2, "0")}`;
 }
 
-function getMonthLabel(monthKey) {
-  const [year, month] = monthKey
-    .split("-")
-    .map(Number);
+function getMonthLabel(
+  monthKey
+) {
+  const [year, month] =
+    monthKey
+      .split("-")
+      .map(Number);
 
   return new Intl.DateTimeFormat(
     "fr-FR",
@@ -114,28 +137,49 @@ function getMonthLabel(monthKey) {
       year: "numeric",
     }
   ).format(
-    new Date(year, month - 1, 1)
+    new Date(
+      year,
+      month - 1,
+      1
+    )
   );
 }
+
+/* ============================================================
+   CRÉATION D'UN NOUVEAU MOIS
+============================================================ */
 
 function createMonthFromTemplate(
   sourceMonth,
   monthKey
 ) {
   return {
-    label: getMonthLabel(monthKey),
+    label:
+      getMonthLabel(
+        monthKey
+      ),
 
-    income: sourceMonth.income.map(
-      (item) => ({
-        ...item,
-        actual: 0,
-      })
-    ),
+    income:
+      sourceMonth.income.map(
+        (item) => ({
+          ...item,
+          actual: 0,
+        })
+      ),
 
     fixedExpenses:
       sourceMonth.fixedExpenses.map(
         (item) => ({
           ...item,
+
+          /*
+           * actual n'est plus utilisé
+           * comme source de vérité.
+           *
+           * Il est conservé uniquement
+           * pour compatibilité avec
+           * l'ancien modèle.
+           */
           actual: 0,
         })
       ),
@@ -150,11 +194,12 @@ function createMonthFromTemplate(
 
     transactions: [],
 
-    goals: sourceMonth.goals.map(
-      (goal) => ({
-        ...goal,
-      })
-    ),
+    goals:
+      sourceMonth.goals.map(
+        (goal) => ({
+          ...goal,
+        })
+      ),
   };
 }
 
@@ -162,7 +207,11 @@ function ensureMonthExists(
   budgetData,
   monthKey
 ) {
-  if (budgetData.months[monthKey]) {
+  if (
+    budgetData.months[
+      monthKey
+    ]
+  ) {
     return budgetData;
   }
 
@@ -173,7 +222,8 @@ function ensureMonthExists(
 
   const templateKey =
     existingKeys.find(
-      (key) => key <= monthKey
+      (key) =>
+        key <= monthKey
     ) ||
     existingKeys[0];
 
@@ -198,6 +248,68 @@ function ensureMonthExists(
 }
 
 /* ============================================================
+   CALCUL DU PAYÉ PAR CHARGE FIXE
+
+   SOURCE DE VÉRITÉ :
+   les transactions.
+
+   On ne lit PLUS fixedExpense.actual.
+============================================================ */
+
+function getFixedExpensePaid(
+  month,
+  fixedExpenseId
+) {
+  return month.transactions
+    .filter(
+      (transaction) =>
+        transaction.type ===
+          "expense" &&
+        transaction.category ===
+          "Charges fixes" &&
+        transaction.fixedExpenseId ===
+          fixedExpenseId
+    )
+    .reduce(
+      (sum, transaction) =>
+        sum +
+        toNumber(
+          transaction.amount
+        ),
+      0
+    );
+}
+
+/* ============================================================
+   CALCUL D'UNE ENVELOPPE
+
+   SOURCE DE VÉRITÉ :
+   les transactions.
+============================================================ */
+
+function getEnvelopeSpent(
+  month,
+  envelopeName
+) {
+  return month.transactions
+    .filter(
+      (transaction) =>
+        transaction.type ===
+          "expense" &&
+        transaction.category ===
+          envelopeName
+    )
+    .reduce(
+      (sum, transaction) =>
+        sum +
+        toNumber(
+          transaction.amount
+        ),
+      0
+    );
+}
+
+/* ============================================================
    APPLICATION
 ============================================================ */
 
@@ -205,11 +317,17 @@ function App() {
   const [data, setData] =
     useState(loadData);
 
-  const [activePage, setActivePage] =
-    useState("dashboard");
+  const [
+    activePage,
+    setActivePage,
+  ] = useState(
+    "dashboard"
+  );
 
-  const [showAddModal, setShowAddModal] =
-    useState(false);
+  const [
+    showAddModal,
+    setShowAddModal,
+  ] = useState(false);
 
   const currentMonth =
     data.months[
@@ -220,12 +338,22 @@ function App() {
      SAUVEGARDE
   ========================================================== */
 
-  const saveData = (newData) => {
-    setData(newData);
+  const saveData = (
+    newData
+  ) => {
+    const finalData = {
+      ...newData,
+      dataVersion:
+        DATA_VERSION,
+    };
+
+    setData(finalData);
 
     localStorage.setItem(
-      "mon-budget-data",
-      JSON.stringify(newData)
+      STORAGE_KEY,
+      JSON.stringify(
+        finalData
+      )
     );
   };
 
@@ -260,16 +388,16 @@ function App() {
   ========================================================== */
 
   const totals = useMemo(() => {
-    /* ------------------------------
+    /* --------------------------------------------------------
        REVENUS
-    ------------------------------ */
+    -------------------------------------------------------- */
 
     const incomePlanned =
       currentMonth.income.reduce(
         (sum, item) =>
           sum +
-          Number(
-            item.planned || 0
+          toNumber(
+            item.planned
           ),
         0
       );
@@ -278,8 +406,8 @@ function App() {
       currentMonth.income.reduce(
         (sum, item) =>
           sum +
-          Number(
-            item.actual || 0
+          toNumber(
+            item.actual
           ),
         0
       );
@@ -288,171 +416,210 @@ function App() {
       incomeActual -
       incomePlanned;
 
-    /* ------------------------------
+    /* --------------------------------------------------------
        CHARGES FIXES
-    ------------------------------ */
+
+       IMPORTANT :
+       actual = somme des transactions
+       et NON plus fixedExpense.actual
+    -------------------------------------------------------- */
+
+    const fixedDetails =
+      currentMonth.fixedExpenses.map(
+        (expense) => {
+          const planned =
+            toNumber(
+              expense.planned
+            );
+
+          const paid =
+            getFixedExpensePaid(
+              currentMonth,
+              expense.id
+            );
+
+          const remaining =
+            Math.max(
+              planned - paid,
+              0
+            );
+
+          const overrun =
+            Math.max(
+              paid - planned,
+              0
+            );
+
+          return {
+            ...expense,
+            planned,
+            paid,
+            remaining,
+            overrun,
+          };
+        }
+      );
 
     const fixedPlanned =
-      currentMonth.fixedExpenses.reduce(
-        (sum, item) =>
+      fixedDetails.reduce(
+        (sum, expense) =>
           sum +
-          Number(
-            item.planned || 0
-          ),
+          expense.planned,
         0
       );
 
     const fixedActual =
-      currentMonth.fixedExpenses.reduce(
-        (sum, item) =>
+      fixedDetails.reduce(
+        (sum, expense) =>
           sum +
-          Number(
-            item.actual || 0
-          ),
+          expense.paid,
         0
       );
 
     const fixedRemaining =
-      currentMonth.fixedExpenses.reduce(
-        (sum, item) =>
+      fixedDetails.reduce(
+        (sum, expense) =>
           sum +
-          Math.max(
-            Number(
-              item.planned || 0
-            ) -
-              Number(
-                item.actual || 0
-              ),
-            0
-          ),
+          expense.remaining,
         0
       );
 
-    const fixedDifference =
-      fixedActual -
-      fixedPlanned;
+    const fixedOverrun =
+      fixedDetails.reduce(
+        (sum, expense) =>
+          sum +
+          expense.overrun,
+        0
+      );
 
-    /* ------------------------------
+    /* --------------------------------------------------------
        ENVELOPPES
-    ------------------------------ */
+
+       Le budget reste fixe.
+       Le dépensé vient des transactions.
+    -------------------------------------------------------- */
+
+    const envelopeDetails =
+      currentMonth.envelopes.map(
+        (envelope) => {
+          const budget =
+            toNumber(
+              envelope.budget
+            );
+
+          const spent =
+            getEnvelopeSpent(
+              currentMonth,
+              envelope.name
+            );
+
+          const remaining =
+            Math.max(
+              budget - spent,
+              0
+            );
+
+          const overrun =
+            Math.max(
+              spent - budget,
+              0
+            );
+
+          return {
+            ...envelope,
+            budget,
+            spent,
+            remaining,
+            overrun,
+          };
+        }
+      );
 
     const envelopeBudget =
-      currentMonth.envelopes.reduce(
-        (sum, item) =>
+      envelopeDetails.reduce(
+        (sum, envelope) =>
           sum +
-          Number(
-            item.budget || 0
-          ),
+          envelope.budget,
         0
       );
 
     const envelopeSpent =
-      currentMonth.envelopes.reduce(
-        (sum, item) =>
+      envelopeDetails.reduce(
+        (sum, envelope) =>
           sum +
-          Number(
-            item.spent || 0
-          ),
+          envelope.spent,
         0
       );
 
     const envelopeRemaining =
-      currentMonth.envelopes.reduce(
-        (sum, item) =>
+      envelopeDetails.reduce(
+        (sum, envelope) =>
           sum +
-          Math.max(
-            Number(
-              item.budget || 0
-            ) -
-              Number(
-                item.spent || 0
-              ),
-            0
-          ),
+          envelope.remaining,
         0
       );
 
     const overBudget =
-      currentMonth.envelopes.reduce(
-        (sum, item) =>
+      envelopeDetails.reduce(
+        (sum, envelope) =>
           sum +
-          Math.max(
-            Number(
-              item.spent || 0
-            ) -
-              Number(
-                item.budget || 0
-              ),
-            0
-          ),
+          envelope.overrun,
         0
       );
 
-    /* ------------------------------
+    /* --------------------------------------------------------
        ÉPARGNE
-    ------------------------------ */
+    -------------------------------------------------------- */
 
-    const savingsEnvelopes =
-      currentMonth.envelopes.filter(
+    const savingsDetails =
+      envelopeDetails.filter(
         (item) =>
           item.name ===
           "Épargne"
       );
 
     const savings =
-      savingsEnvelopes.reduce(
+      savingsDetails.reduce(
         (sum, item) =>
-          sum +
-          Number(
-            item.spent || 0
-          ),
+          sum + item.spent,
         0
       );
 
     const savingsBudget =
-      savingsEnvelopes.reduce(
+      savingsDetails.reduce(
         (sum, item) =>
-          sum +
-          Number(
-            item.budget || 0
-          ),
+          sum + item.budget,
         0
       );
 
-    /* ------------------------------
+    /* --------------------------------------------------------
        ENVELOPPES VARIABLES
-    ------------------------------ */
+    -------------------------------------------------------- */
 
-    const variableEnvelopes =
-      currentMonth.envelopes.filter(
+    const variableDetails =
+      envelopeDetails.filter(
         (item) =>
           item.name !==
           "Épargne"
       );
 
     const variableBudget =
-      variableEnvelopes.reduce(
+      variableDetails.reduce(
         (sum, item) =>
-          sum +
-          Number(
-            item.budget || 0
-          ),
+          sum + item.budget,
         0
       );
 
     const variableSpent =
-      variableEnvelopes.reduce(
+      variableDetails.reduce(
         (sum, item) =>
-          sum +
-          Number(
-            item.spent || 0
-          ),
+          sum + item.spent,
         0
       );
 
-    /* ------------------------------
-       SYNTHÈSE
-    ------------------------------ */
+    /* --------------------------------------------------------
+       DÉPENSES
+    -------------------------------------------------------- */
 
     const actualExpenses =
       fixedActual +
@@ -462,28 +629,20 @@ function App() {
       fixedPlanned +
       variableBudget;
 
-    /*
-     * Argent réellement disponible
-     * à l'instant présent.
-     */
+    /* --------------------------------------------------------
+       DISPONIBLE
+    -------------------------------------------------------- */
+
     const availableNow =
       incomeActual -
       fixedActual -
       envelopeSpent;
 
-    /*
-     * Argent restant après paiement
-     * des charges fixes encore dues.
-     */
     const availableAfterFixed =
       incomeActual -
       fixedRemaining -
       envelopeSpent;
 
-    /*
-     * Prévision après consommation
-     * du budget restant.
-     */
     const forecastEnd =
       availableNow -
       envelopeRemaining;
@@ -506,14 +665,17 @@ function App() {
       incomeActual,
       incomeDifference,
 
+      fixedDetails,
       fixedPlanned,
       fixedActual,
       fixedRemaining,
-      fixedDifference,
+      fixedOverrun,
 
+      envelopeDetails,
       envelopeBudget,
       envelopeSpent,
       envelopeRemaining,
+      overBudget,
 
       variableBudget,
       variableSpent,
@@ -529,125 +691,54 @@ function App() {
       forecastEnd,
       plannedEnd,
 
-      overBudget,
       expenseRate,
     };
   }, [currentMonth]);
 
   /* ==========================================================
      AJOUT TRANSACTION
+
+     IMPORTANT :
+     aucune modification de fixedExpenses.actual
+     aucune modification de envelope.spent
+
+     La transaction est la seule écriture.
   ========================================================== */
 
   const addTransaction = (
     transaction
   ) => {
-    const month =
-      data.months[
-        data.currentMonth
-      ];
-
     const amount =
-      Number(
+      toNumber(
         transaction.amount
       );
 
+    if (amount <= 0) {
+      return;
+    }
+
     const newTransaction = {
       ...transaction,
+
       id: `tx-${Date.now()}`,
+
       amount,
+
+      date:
+        transaction.date ||
+        new Date()
+          .toISOString()
+          .split("T")[0],
     };
 
-    let updatedMonth = {
-      ...month,
+    const updatedMonth = {
+      ...currentMonth,
 
       transactions: [
-        ...month.transactions,
+        ...currentMonth.transactions,
         newTransaction,
       ],
     };
-
-    /* ------------------------------
-       DÉPENSE
-    ------------------------------ */
-
-    if (
-      transaction.type ===
-      "expense"
-    ) {
-      /*
-       * CHARGE FIXE
-       */
-      if (
-        transaction.category ===
-        "Charges fixes"
-      ) {
-        updatedMonth.fixedExpenses =
-          month.fixedExpenses.map(
-            (expense) =>
-              expense.id ===
-              transaction.fixedExpenseId
-                ? {
-                    ...expense,
-
-                    actual:
-                      Number(
-                        expense.actual ||
-                          0
-                      ) +
-                      amount,
-                  }
-                : expense
-          );
-      } else {
-        /*
-         * ENVELOPPE VARIABLE
-         */
-        updatedMonth.envelopes =
-          month.envelopes.map(
-            (envelope) =>
-              envelope.name ===
-              transaction.category
-                ? {
-                    ...envelope,
-
-                    spent:
-                      Number(
-                        envelope.spent ||
-                          0
-                      ) +
-                      amount,
-                  }
-                : envelope
-          );
-      }
-    }
-
-    /* ------------------------------
-       REVENU
-    ------------------------------ */
-
-    if (
-      transaction.type ===
-      "income"
-    ) {
-      updatedMonth.income = [
-        ...month.income,
-
-        {
-          id:
-            newTransaction.id,
-
-          label:
-            transaction.label,
-
-          planned:
-            amount,
-
-          actual:
-            amount,
-        },
-      ];
-    }
 
     saveData({
       ...data,
@@ -670,8 +761,6 @@ function App() {
   return (
     <div className="app">
 
-      {/* HEADER */}
-
       <header className="topbar">
 
         <div>
@@ -687,100 +776,83 @@ function App() {
         <button
           className="icon-button"
           title="Paramètres"
+          type="button"
         >
-          <Settings size={20} />
+          <Settings
+            size={20}
+          />
         </button>
 
       </header>
-
-      {/* CONTENU */}
 
       <main className="main">
 
         {activePage ===
           "dashboard" && (
-
           <Dashboard
             month={
               currentMonth
             }
-
             totals={
               totals
             }
-
             onAdd={() =>
               setShowAddModal(
                 true
               )
             }
-
             onPreviousMonth={() =>
               changeMonth(-1)
             }
-
             onNextMonth={() =>
               changeMonth(1)
             }
           />
-
         )}
 
         {activePage ===
           "budget" && (
-
           <Budget
             month={
               currentMonth
             }
-
             totals={
               totals
             }
           />
-
         )}
 
         {activePage ===
           "transactions" && (
-
           <Transactions
             transactions={
               currentMonth.transactions
             }
           />
-
         )}
 
         {activePage ===
           "goals" && (
-
           <Goals
             goals={
               currentMonth.goals
             }
           />
-
         )}
 
         {activePage ===
           "analysis" && (
-
           <Analysis
             month={
               currentMonth
             }
-
             totals={
               totals
             }
           />
-
         )}
 
       </main>
-
-      {/* BOUTON AJOUT */}
 
       <button
         className="floating-button"
@@ -790,11 +862,10 @@ function App() {
           )
         }
         aria-label="Ajouter"
+        type="button"
       >
         <Plus size={25} />
       </button>
-
-      {/* NAVIGATION */}
 
       <nav className="bottom-nav">
 
@@ -874,30 +945,23 @@ function App() {
 
       </nav>
 
-      {/* MODALE */}
-
       {showAddModal && (
-
         <AddTransactionModal
           onClose={() =>
             setShowAddModal(
               false
             )
           }
-
           onSave={
             addTransaction
           }
-
           envelopes={
             currentMonth.envelopes
           }
-
           fixedExpenses={
             currentMonth.fixedExpenses
           }
         />
-
       )}
 
     </div>
@@ -924,6 +988,7 @@ function NavButton({
       onClick={
         onClick
       }
+      type="button"
     >
       {icon}
 
@@ -945,32 +1010,16 @@ function Dashboard({
   onPreviousMonth,
   onNextMonth,
 }) {
-  const alerts =
-    month.envelopes.filter(
-      (item) =>
-        Number(
-          item.budget || 0
-        ) > 0 &&
-        Number(
-          item.spent || 0
-        ) >=
-          Number(
-            item.budget || 0
-          )
-    );
-
-  const hasNegativeAvailable =
+  const negative =
     totals.availableNow <
     0;
 
-  const forecastIsNegative =
+  const forecastNegative =
     totals.forecastEnd <
     0;
 
   return (
     <div className="page">
-
-      {/* MOIS */}
 
       <MonthSelector
         label={
@@ -983,8 +1032,6 @@ function Dashboard({
           onNextMonth
         }
       />
-
-      {/* DISPONIBLE */}
 
       <section className="hero-card">
 
@@ -1019,8 +1066,6 @@ function Dashboard({
         </div>
 
       </section>
-
-      {/* STATS */}
 
       <section className="stats-grid">
 
@@ -1076,8 +1121,6 @@ function Dashboard({
 
       </section>
 
-      {/* REVENUS */}
-
       <SectionTitle
         title="Revenus"
       />
@@ -1085,78 +1128,48 @@ function Dashboard({
       <div className="simple-list">
 
         {month.income.map(
-          (income) => {
+          (income) => (
+            <div
+              className="simple-row"
+              key={
+                income.id
+              }
+            >
 
-            const difference =
-              Number(
-                income.actual || 0
-              ) -
-              Number(
-                income.planned || 0
-              );
+              <div>
 
-            return (
-              <div
-                className="simple-row"
-                key={
-                  income.id
-                }
-              >
+                <strong>
+                  {income.label}
+                </strong>
 
-                <div>
-
-                  <strong>
-                    {income.label}
-                  </strong>
-
-                  <small>
-                    Prévu :{" "}
-                    {formatMoney(
-                      income.planned
-                    )}
-                  </small>
-
-                </div>
-
-                <div>
-
-                  <strong>
-                    {formatMoney(
-                      income.actual
-                    )}
-                  </strong>
-
-                  <small
-                    className={
-                      difference <
-                      0
-                        ? "warning-text"
-                        : ""
-                    }
-                  >
-                    {difference ===
-                    0
-                      ? "Conforme"
-                      : difference >
-                        0
-                      ? `+${formatMoney(
-                          difference
-                        )}`
-                      : formatMoney(
-                          difference
-                        )}
-                  </small>
-
-                </div>
+                <small>
+                  Prévu :{" "}
+                  {formatMoney(
+                    income.planned
+                  )}
+                </small>
 
               </div>
-            );
-          }
+
+              <div>
+
+                <strong>
+                  {formatMoney(
+                    income.actual
+                  )}
+                </strong>
+
+                <small>
+                  Réel
+                </small>
+
+              </div>
+
+            </div>
+          )
         )}
 
       </div>
-
-      {/* CHARGES FIXES */}
 
       <SectionTitle
         title="Charges fixes"
@@ -1243,106 +1256,74 @@ function Dashboard({
 
       </section>
 
-      {/* DETAIL CHARGES FIXES */}
-
       <div className="simple-list">
 
-        {month.fixedExpenses.map(
-          (expense) => {
+        {totals.fixedDetails.map(
+          (expense) => (
+            <div
+              className="simple-row"
+              key={
+                expense.id
+              }
+            >
 
-            const planned =
-              Number(
-                expense.planned ||
-                  0
-              );
+              <div>
 
-            const actual =
-              Number(
-                expense.actual ||
-                  0
-              );
+                <strong>
+                  {expense.label}
+                </strong>
 
-            const remaining =
-              Math.max(
-                planned -
-                  actual,
-                0
-              );
-
-            const difference =
-              actual -
-              planned;
-
-            return (
-
-              <div
-                className="simple-row"
-                key={
-                  expense.id
-                }
-              >
-
-                <div>
-
-                  <strong>
-                    {expense.label}
-                  </strong>
-
-                  <small>
-                    Prévu :{" "}
-                    {formatMoney(
-                      planned
-                    )}
-                  </small>
-
-                </div>
-
-                <div>
-
-                  <strong
-                    className={
-                      difference >
-                      0
-                        ? "danger-text"
-                        : remaining >
-                          0
-                        ? "warning-text"
-                        : ""
-                    }
-                  >
-
-                    {difference >
-                    0
-                      ? `+${formatMoney(
-                          difference
-                        )}`
-                      : remaining >
-                        0
-                      ? `Reste ${formatMoney(
-                          remaining
-                        )}`
-                      : "Payé"}
-
-                  </strong>
-
-                  <small>
-                    Réel :{" "}
-                    {formatMoney(
-                      actual
-                    )}
-                  </small>
-
-                </div>
+                <small>
+                  Prévu :{" "}
+                  {formatMoney(
+                    expense.planned
+                  )}
+                </small>
 
               </div>
 
-            );
-          }
+              <div>
+
+                <strong
+                  className={
+                    expense.overrun >
+                    0
+                      ? "danger-text"
+                      : expense.remaining >
+                        0
+                      ? "warning-text"
+                      : ""
+                  }
+                >
+
+                  {expense.overrun >
+                  0
+                    ? `Dépassement ${formatMoney(
+                        expense.overrun
+                      )}`
+                    : expense.remaining >
+                      0
+                    ? `Reste ${formatMoney(
+                        expense.remaining
+                      )}`
+                    : "Payé"}
+
+                </strong>
+
+                <small>
+                  Payé :{" "}
+                  {formatMoney(
+                    expense.paid
+                  )}
+                </small>
+
+              </div>
+
+            </div>
+          )
         )}
 
       </div>
-
-      {/* ENVELOPPES */}
 
       <SectionTitle
         title="Enveloppes"
@@ -1350,9 +1331,8 @@ function Dashboard({
 
       <div className="envelope-list">
 
-        {month.envelopes.map(
+        {totals.envelopeDetails.map(
           (envelope) => (
-
             <EnvelopeCard
               key={
                 envelope.id
@@ -1361,20 +1341,16 @@ function Dashboard({
                 envelope
               }
             />
-
           )
         )}
 
       </div>
 
-      {/* ÉTAT */}
-
       <SectionTitle
         title="État du mois"
       />
 
-      {hasNegativeAvailable ? (
-
+      {negative ? (
         <div className="alert-card">
 
           <AlertTriangle
@@ -1388,16 +1364,14 @@ function Dashboard({
             </strong>
 
             <p>
-              Les dépenses enregistrées
+              Les dépenses déjà enregistrées
               dépassent les revenus encaissés.
             </p>
 
           </div>
 
         </div>
-
-      ) : forecastIsNegative ? (
-
+      ) : forecastNegative ? (
         <div className="alert-card">
 
           <AlertTriangle
@@ -1412,16 +1386,40 @@ function Dashboard({
 
             <p>
               Le budget devient négatif
-              si toutes les enveloppes
-              restantes sont consommées.
+              si les budgets restants sont
+              entièrement consommés.
             </p>
 
           </div>
 
         </div>
+      ) : totals.fixedOverrun >
+        0 ? (
+        <div className="alert-card">
 
-      ) : totals.overBudget > 0 ? (
+          <AlertTriangle
+            size={21}
+          />
 
+          <div>
+
+            <strong>
+              Une charge fixe dépasse
+              son montant prévu
+            </strong>
+
+            <p>
+              Dépassement total :{" "}
+              {formatMoney(
+                totals.fixedOverrun
+              )}
+            </p>
+
+          </div>
+
+        </div>
+      ) : totals.overBudget >
+        0 ? (
         <div className="alert-card">
 
           <AlertTriangle
@@ -1435,7 +1433,7 @@ function Dashboard({
             </strong>
 
             <p>
-              Total des dépassements :{" "}
+              Dépassement total :{" "}
               {formatMoney(
                 totals.overBudget
               )}
@@ -1444,9 +1442,7 @@ function Dashboard({
           </div>
 
         </div>
-
       ) : (
-
         <div className="empty-card">
 
           <CheckCircle2
@@ -1454,75 +1450,10 @@ function Dashboard({
           />
 
           <span>
-            Situation maîtrisée :
-            aucun dépassement.
+            Situation maîtrisée.
           </span>
 
         </div>
-
-      )}
-
-      {/* ALERTES */}
-
-      {alerts.length >
-        0 && (
-
-        <div
-          className="alert-list"
-          style={{
-            marginTop: 8,
-          }}
-        >
-
-          {alerts.map(
-            (envelope) => (
-
-              <div
-                className="alert-card"
-                key={
-                  envelope.id
-                }
-              >
-
-                <AlertTriangle
-                  size={18}
-                />
-
-                <div>
-
-                  <strong>
-                    {envelope.name}
-                  </strong>
-
-                  <p>
-
-                    {Number(
-                      envelope.spent
-                    ) >
-                    Number(
-                      envelope.budget
-                    )
-                      ? `Dépassement de ${formatMoney(
-                          Number(
-                            envelope.spent
-                          ) -
-                            Number(
-                              envelope.budget
-                            )
-                        )}`
-                      : "Budget atteint."}
-
-                  </p>
-
-                </div>
-
-              </div>
-
-            )
-          )}
-
-        </div>
-
       )}
 
       <button
@@ -1530,6 +1461,7 @@ function Dashboard({
         onClick={
           onAdd
         }
+        type="button"
       >
 
         <Plus
@@ -1557,11 +1489,11 @@ function MonthSelector({
     <div className="month-selector">
 
       <button
-        aria-label="Mois précédent"
         onClick={
           onPrevious
         }
         type="button"
+        aria-label="Mois précédent"
       >
         <ChevronLeft
           size={20}
@@ -1573,11 +1505,11 @@ function MonthSelector({
       </strong>
 
       <button
-        aria-label="Mois suivant"
         onClick={
           onNext
         }
         type="button"
+        aria-label="Mois suivant"
       >
         <ChevronRight
           size={20}
@@ -1589,7 +1521,7 @@ function MonthSelector({
 }
 
 /* ============================================================
-   CARTE STATISTIQUE
+   STAT CARD
 ============================================================ */
 
 function StatCard({
@@ -1629,21 +1561,18 @@ function StatCard({
 
       {planned !==
         undefined && (
-
         <small>
           Prévu :{" "}
           {formatMoney(
             planned
           )}
         </small>
-
       )}
 
       {difference !==
         undefined &&
         difference !==
           0 && (
-
         <small
           className={
             difference <
@@ -1652,19 +1581,15 @@ function StatCard({
               : "positive-text"
           }
         >
-
           Écart :{" "}
           {difference >
           0
             ? "+"
             : ""}
-
           {formatMoney(
             difference
           )}
-
         </small>
-
       )}
 
     </div>
@@ -1679,20 +1604,19 @@ function EnvelopeCard({
   envelope,
 }) {
   const budget =
-    Number(
-      envelope.budget || 0
+    toNumber(
+      envelope.budget
     );
 
   const spent =
-    Number(
-      envelope.spent || 0
+    toNumber(
+      envelope.spent
     );
 
   const percentage =
     budget === 0
       ? 0
-      : (spent /
-          budget) *
+      : (spent / budget) *
         100;
 
   const status =
@@ -1701,9 +1625,6 @@ function EnvelopeCard({
       : percentage >= 80
       ? "warning"
       : "normal";
-
-  const difference =
-    budget - spent;
 
   return (
     <div className="envelope-card">
@@ -1753,24 +1674,20 @@ function EnvelopeCard({
 
         <span
           className={
-            difference <
+            envelope.overrun >
             0
               ? "danger-text"
               : ""
           }
         >
-
-          {difference <
+          {envelope.overrun >
           0
-            ? `+${formatMoney(
-                Math.abs(
-                  difference
-                )
+            ? `Dépassement ${formatMoney(
+                envelope.overrun
               )}`
             : `Reste ${formatMoney(
-                difference
+                envelope.remaining
               )}`}
-
         </span>
 
       </div>
@@ -1780,7 +1697,7 @@ function EnvelopeCard({
 }
 
 /* ============================================================
-   TITRE SECTION
+   SECTION TITLE
 ============================================================ */
 
 function SectionTitle({
@@ -1816,7 +1733,6 @@ function Budget({
       <section className="summary-card">
 
         <div>
-
           <span>
             Revenus prévus
           </span>
@@ -1826,11 +1742,9 @@ function Budget({
               totals.incomePlanned
             )}
           </strong>
-
         </div>
 
         <div>
-
           <span>
             Revenus réels
           </span>
@@ -1840,11 +1754,9 @@ function Budget({
               totals.incomeActual
             )}
           </strong>
-
         </div>
 
         <div>
-
           <span>
             Charges restantes
           </span>
@@ -1854,7 +1766,6 @@ function Budget({
               totals.fixedRemaining
             )}
           </strong>
-
         </div>
 
       </section>
@@ -1865,9 +1776,8 @@ function Budget({
 
       <div className="simple-list">
 
-        {month.fixedExpenses.map(
+        {totals.fixedDetails.map(
           (expense) => (
-
             <div
               className="simple-row"
               key={
@@ -1875,20 +1785,14 @@ function Budget({
               }
             >
 
-              <span>
-                {expense.label}
-              </span>
-
               <div>
 
                 <strong>
-                  {formatMoney(
-                    expense.actual
-                  )}
+                  {expense.label}
                 </strong>
 
                 <small>
-                  prévu{" "}
+                  Prévu :{" "}
                   {formatMoney(
                     expense.planned
                   )}
@@ -1896,8 +1800,24 @@ function Budget({
 
               </div>
 
-            </div>
+              <div>
 
+                <strong>
+                  {formatMoney(
+                    expense.paid
+                  )}
+                </strong>
+
+                <small>
+                  Reste :{" "}
+                  {formatMoney(
+                    expense.remaining
+                  )}
+                </small>
+
+              </div>
+
+            </div>
           )
         )}
 
@@ -1909,9 +1829,8 @@ function Budget({
 
       <div className="simple-list">
 
-        {month.envelopes.map(
+        {totals.envelopeDetails.map(
           (envelope) => (
-
             <div
               className="simple-row"
               key={
@@ -1919,9 +1838,20 @@ function Budget({
               }
             >
 
-              <span>
-                {envelope.name}
-              </span>
+              <div>
+
+                <strong>
+                  {envelope.name}
+                </strong>
+
+                <small>
+                  Budget :{" "}
+                  {formatMoney(
+                    envelope.budget
+                  )}
+                </small>
+
+              </div>
 
               <div>
 
@@ -1932,16 +1862,15 @@ function Budget({
                 </strong>
 
                 <small>
-                  budget{" "}
+                  Reste :{" "}
                   {formatMoney(
-                    envelope.budget
+                    envelope.remaining
                   )}
                 </small>
 
               </div>
 
             </div>
-
           )
         )}
 
@@ -1963,84 +1892,102 @@ function Transactions({
 
       <PageTitle
         title="Transactions"
-        subtitle="Vos mouvements récents"
+        subtitle="Vos mouvements"
       />
 
-      <div className="transaction-list">
+      {transactions.length ===
+      0 ? (
+        <div className="empty-card">
 
-        {[...transactions]
-          .reverse()
-          .map(
-            (transaction) => (
+          <Receipt
+            size={20}
+          />
 
-              <div
-                className="transaction-card"
-                key={
-                  transaction.id
-                }
-              >
+          <span>
+            Aucune transaction
+            enregistrée pour ce mois.
+          </span>
 
-                <div className="transaction-icon">
+        </div>
+      ) : (
+        <div className="transaction-list">
 
-                  {transaction.type ===
-                  "expense" ? (
-
-                    <ArrowDown
-                      size={18}
-                    />
-
-                  ) : (
-
-                    <ArrowUp
-                      size={18}
-                    />
-
-                  )}
-
-                </div>
-
-                <div className="transaction-info">
-
-                  <strong>
-                    {transaction.label}
-                  </strong>
-
-                  <span>
-                    {formatDate(
-                      transaction.date
-                    )}
-                    {" · "}
-                    {transaction.payment}
-                  </span>
-
-                </div>
-
-                <strong
-                  className={
-                    transaction.type ===
-                    "expense"
-                      ? "amount-expense"
-                      : "amount-income"
+          {[
+            ...transactions,
+          ]
+            .reverse()
+            .map(
+              (
+                transaction
+              ) => (
+                <div
+                  className="transaction-card"
+                  key={
+                    transaction.id
                   }
                 >
 
-                  {transaction.type ===
-                  "expense"
-                    ? "-"
-                    : "+"}
+                  <div className="transaction-icon">
 
-                  {formatMoney(
-                    transaction.amount
-                  )}
+                    {transaction.type ===
+                    "expense" ? (
+                      <ArrowDown
+                        size={18}
+                      />
+                    ) : (
+                      <ArrowUp
+                        size={18}
+                      />
+                    )}
 
-                </strong>
+                  </div>
 
-              </div>
+                  <div className="transaction-info">
 
-            )
-          )}
+                    <strong>
+                      {
+                        transaction.label
+                      }
+                    </strong>
 
-      </div>
+                    <span>
+                      {formatDate(
+                        transaction.date
+                      )}
+                      {" · "}
+                      {
+                        transaction.payment
+                      }
+                    </span>
+
+                  </div>
+
+                  <strong
+                    className={
+                      transaction.type ===
+                      "expense"
+                        ? "amount-expense"
+                        : "amount-income"
+                    }
+                  >
+
+                    {transaction.type ===
+                    "expense"
+                      ? "-"
+                      : "+"}
+
+                    {formatMoney(
+                      transaction.amount
+                    )}
+
+                  </strong>
+
+                </div>
+              )
+            )}
+
+        </div>
+      )}
 
     </div>
   );
@@ -2065,17 +2012,24 @@ function Goals({
 
         {goals.map(
           (goal) => {
+            const target =
+              toNumber(
+                goal.target
+              );
+
+            const current =
+              toNumber(
+                goal.current
+              );
 
             const percentage =
-              goal.target ===
-              0
+              target === 0
                 ? 0
-                : (goal.current /
-                    goal.target) *
+                : (current /
+                    target) *
                   100;
 
             return (
-
               <div
                 className="goal-card"
                 key={
@@ -2094,7 +2048,7 @@ function Goals({
                     <span>
                       Objectif :{" "}
                       {formatMoney(
-                        goal.target
+                        target
                       )}
                     </span>
 
@@ -2124,7 +2078,7 @@ function Goals({
 
                   <strong>
                     {formatMoney(
-                      goal.current
+                      current
                     )}
                   </strong>
 
@@ -2141,8 +2095,8 @@ function Goals({
                   <span>
                     Reste{" "}
                     {formatMoney(
-                      goal.target -
-                        goal.current
+                      target -
+                        current
                     )}
                   </span>
 
@@ -2156,7 +2110,6 @@ function Goals({
                 </div>
 
               </div>
-
             );
           }
         )}
@@ -2175,27 +2128,13 @@ function Analysis({
   month,
   totals,
 }) {
-  const monitoredEnvelopes =
-    month.envelopes.filter(
-      (item) => {
-
-        const budget =
-          Number(
-            item.budget || 0
-          );
-
-        const spent =
-          Number(
-            item.spent || 0
-          );
-
-        return (
-          budget > 0 &&
-          spent /
-              budget >=
-            0.8
-        );
-      }
+  const monitored =
+    totals.envelopeDetails.filter(
+      (item) =>
+        item.budget > 0 &&
+        item.spent /
+            item.budget >=
+          0.8
     );
 
   return (
@@ -2219,9 +2158,8 @@ function Analysis({
         </strong>
 
         <p>
-          Part des revenus encaissés
-          déjà consommée par les dépenses,
-          hors épargne.
+          Part des revenus réellement
+          encaissés déjà consommée.
         </p>
 
       </section>
@@ -2249,7 +2187,7 @@ function Analysis({
         <div className="analysis-row">
 
           <span>
-            Dépenses
+            Dépenses réelles
           </span>
 
           <strong>
@@ -2277,7 +2215,7 @@ function Analysis({
         <div className="analysis-row">
 
           <span>
-            Charges encore à payer
+            Charges restantes
           </span>
 
           <strong>
@@ -2310,9 +2248,8 @@ function Analysis({
           Enveloppes à surveiller
         </h3>
 
-        {monitoredEnvelopes.length ===
+        {monitored.length ===
         0 ? (
-
           <div className="empty-card">
 
             <CheckCircle2
@@ -2324,53 +2261,34 @@ function Analysis({
             </span>
 
           </div>
-
         ) : (
+          monitored.map(
+            (item) => (
+              <div
+                className="analysis-row"
+                key={
+                  item.id
+                }
+              >
 
-          monitoredEnvelopes.map(
-            (item) => {
+                <span>
+                  {item.name}
+                </span>
 
-              const budget =
-                Number(
-                  item.budget || 0
-                );
+                <strong>
+                  {(
+                    (item.spent /
+                      item.budget) *
+                    100
+                  ).toFixed(
+                    0
+                  )}
+                  %
+                </strong>
 
-              const spent =
-                Number(
-                  item.spent || 0
-                );
-
-              return (
-
-                <div
-                  className="analysis-row"
-                  key={
-                    item.id
-                  }
-                >
-
-                  <span>
-                    {item.name}
-                  </span>
-
-                  <strong>
-                    {(
-                      (spent /
-                        budget) *
-                      100
-                    ).toFixed(
-                      0
-                    )}
-                    %
-                  </strong>
-
-                </div>
-
-              );
-
-            }
+              </div>
+            )
           )
-
         )}
 
       </section>
@@ -2380,7 +2298,7 @@ function Analysis({
 }
 
 /* ============================================================
-   TITRE PAGE
+   PAGE TITLE
 ============================================================ */
 
 function PageTitle({
@@ -2403,7 +2321,7 @@ function PageTitle({
 }
 
 /* ============================================================
-   MODALE AJOUT DÉPENSE
+   MODALE AJOUT TRANSACTION
 ============================================================ */
 
 function AddTransactionModal({
@@ -2412,39 +2330,34 @@ function AddTransactionModal({
   envelopes,
   fixedExpenses,
 }) {
-  const availableEnvelopes =
+  const variableEnvelopes =
     envelopes.filter(
       (item) =>
         item.name !==
         "Épargne"
     );
 
-  const [form, setForm] =
-    useState({
-
-      label: "",
-
-      amount: "",
-
-      category:
-        availableEnvelopes[0]
-          ?.name ||
-        "Autre",
-
-      fixedExpenseId:
-        fixedExpenses[0]
-          ?.id ||
-        "",
-
-      payment:
-        "Carte bancaire",
-
-      date:
-        new Date()
-          .toISOString()
-          .split("T")[0],
-
-    });
+  const [
+    form,
+    setForm,
+  ] = useState({
+    label: "",
+    amount: "",
+    category:
+      variableEnvelopes[0]
+        ?.name ||
+      "Courses",
+    fixedExpenseId:
+      fixedExpenses[0]
+        ?.id ||
+      "",
+    payment:
+      "Carte bancaire",
+    date:
+      new Date()
+        .toISOString()
+        .split("T")[0],
+  });
 
   const isFixed =
     form.category ===
@@ -2453,14 +2366,20 @@ function AddTransactionModal({
   const submit = (
     event
   ) => {
-
     event.preventDefault();
 
-    if (
-      !form.amount ||
-      Number(
+    const amount =
+      toNumber(
         form.amount
-      ) <= 0
+      );
+
+    if (amount <= 0) {
+      return;
+    }
+
+    if (
+      isFixed &&
+      !form.fixedExpenseId
     ) {
       return;
     }
@@ -2472,34 +2391,30 @@ function AddTransactionModal({
           form.fixedExpenseId
       );
 
-    const finalLabel =
-      isFixed &&
-      fixedExpense
-        ? fixedExpense.label
-        : form.label;
+    const label =
+      isFixed
+        ? fixedExpense?.label ||
+          "Charge fixe"
+        : form.label.trim();
 
-    if (!finalLabel) {
+    if (!label) {
       return;
     }
 
     onSave({
-
-      ...form,
-
-      label:
-        finalLabel,
-
-      type:
-        "expense",
-
-      amount:
-        Number(
-          form.amount
-        ),
-
+      type: "expense",
+      label,
+      amount,
       category:
         form.category,
-
+      fixedExpenseId:
+        isFixed
+          ? form.fixedExpenseId
+          : null,
+      payment:
+        form.payment,
+      date:
+        form.date,
     });
   };
 
@@ -2513,9 +2428,7 @@ function AddTransactionModal({
 
       <div
         className="modal"
-        onClick={(
-          event
-        ) =>
+        onClick={(event) =>
           event.stopPropagation()
         }
       >
@@ -2529,7 +2442,7 @@ function AddTransactionModal({
             </h2>
 
             <span>
-              Enregistrer un mouvement
+              Enregistrer une transaction
             </span>
 
           </div>
@@ -2541,11 +2454,9 @@ function AddTransactionModal({
             }
             type="button"
           >
-
             <X
               size={21}
             />
-
           </button>
 
         </div>
@@ -2557,7 +2468,6 @@ function AddTransactionModal({
         >
 
           {!isFixed && (
-
             <label>
 
               Libellé
@@ -2581,7 +2491,6 @@ function AddTransactionModal({
               />
 
             </label>
-
           )}
 
           <label>
@@ -2590,8 +2499,8 @@ function AddTransactionModal({
 
             <input
               type="number"
-              step="0.01"
               min="0"
+              step="0.01"
               value={
                 form.amount
               }
@@ -2630,9 +2539,8 @@ function AddTransactionModal({
               }
             >
 
-              {availableEnvelopes.map(
+              {variableEnvelopes.map(
                 (envelope) => (
-
                   <option
                     key={
                       envelope.id
@@ -2641,11 +2549,8 @@ function AddTransactionModal({
                       envelope.name
                     }
                   >
-
                     {envelope.name}
-
                   </option>
-
                 )
               )}
 
@@ -2658,7 +2563,6 @@ function AddTransactionModal({
           </label>
 
           {isFixed && (
-
             <label>
 
               Charge fixe
@@ -2681,7 +2585,6 @@ function AddTransactionModal({
 
                 {fixedExpenses.map(
                   (expense) => (
-
                     <option
                       key={
                         expense.id
@@ -2690,18 +2593,14 @@ function AddTransactionModal({
                         expense.id
                       }
                     >
-
                       {expense.label}
-
                     </option>
-
                   )
                 )}
 
               </select>
 
             </label>
-
           )}
 
           <label>
@@ -2779,9 +2678,7 @@ function AddTransactionModal({
             className="primary-button full"
             type="submit"
           >
-
             Enregistrer
-
           </button>
 
         </form>
