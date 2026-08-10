@@ -1,5 +1,4 @@
 import React, { useMemo, useState } from "react";
-
 import {
   LayoutDashboard,
   WalletCards,
@@ -16,9 +15,7 @@ import {
   Receipt,
   PiggyBank,
 } from "lucide-react";
-
 import { initialData } from "./data";
-
 
 /* ============================================================
    OUTILS
@@ -31,7 +28,6 @@ const formatMoney = (value) =>
     maximumFractionDigits: 2,
   }).format(Number(value) || 0);
 
-
 const formatDate = (date) =>
   new Intl.DateTimeFormat("fr-FR", {
     day: "2-digit",
@@ -39,10 +35,10 @@ const formatDate = (date) =>
     year: "numeric",
   }).format(new Date(date));
 
-
 /* ============================================================
    CHARGEMENT DES DONNÉES
 ============================================================ */
+
 function loadData() {
   try {
     const saved = localStorage.getItem("mon-budget-data");
@@ -53,12 +49,6 @@ function loadData() {
 
     const parsed = JSON.parse(saved);
 
-    /*
-     * Vérification complète de la structure.
-     * On ne considère pas les données comme valides
-     * simplement parce que "months" et "currentMonth"
-     * existent.
-     */
     const currentMonthKey = parsed?.currentMonth;
     const currentMonth = parsed?.months?.[currentMonthKey];
 
@@ -79,40 +69,22 @@ function loadData() {
       return parsed;
     }
 
-    /*
-     * Les anciennes données sont incompatibles.
-     * On supprime uniquement le cache local corrompu
-     * et on repart de la structure officielle.
-     */
-    console.warn(
-      "Anciennes données de budget incompatibles. Réinitialisation."
-    );
-
     localStorage.removeItem("mon-budget-data");
-
-    return initialData;
-
   } catch (error) {
-
     console.error(
       "Impossible de charger les données du budget.",
       error
     );
 
     localStorage.removeItem("mon-budget-data");
-
-    return initialData;
   }
+
+  return initialData;
 }
 
-
 /* ============================================================
-   OUTILS DE GESTION DES MOIS
+   GESTION DES MOIS
 ============================================================ */
-
-/*
- * Transforme "2026-08" en "2026-07", "2026-09", etc.
- */
 
 function shiftMonth(monthKey, amount) {
   const [year, month] = monthKey
@@ -130,11 +102,6 @@ function shiftMonth(monthKey, amount) {
   ).padStart(2, "0")}`;
 }
 
-
-/*
- * Crée le libellé français du mois.
- */
-
 function getMonthLabel(monthKey) {
   const [year, month] = monthKey
     .split("-")
@@ -150,35 +117,6 @@ function getMonthLabel(monthKey) {
     new Date(year, month - 1, 1)
   );
 }
-
-
-/*
- * Première date du mois.
- */
-
-function getFirstDateOfMonth(monthKey) {
-  return `${monthKey}-01`;
-}
-
-
-/*
- * Crée un nouveau mois à partir
- * de la structure du mois précédent.
- *
- * Les éléments structurels sont conservés :
- *
- * - budgets
- * - charges fixes prévues
- * - enveloppes
- * - objectifs
- *
- * Les éléments propres au mois sont réinitialisés :
- *
- * - revenus réels
- * - charges réellement payées
- * - dépenses d'enveloppes
- * - transactions
- */
 
 function createMonthFromTemplate(
   sourceMonth,
@@ -212,12 +150,6 @@ function createMonthFromTemplate(
 
     transactions: [],
 
-    /*
-     * Les objectifs sont des données
-     * qui dépassent le mois.
-     *
-     * On conserve donc leur progression.
-     */
     goals: sourceMonth.goals.map(
       (goal) => ({
         ...goal,
@@ -226,51 +158,29 @@ function createMonthFromTemplate(
   };
 }
 
-
-/*
- * S'assure qu'un mois existe.
- *
- * Si le mois n'existe pas :
- * → création automatique.
- */
-
 function ensureMonthExists(
   budgetData,
   monthKey
 ) {
-  if (
-    budgetData.months[monthKey]
-  ) {
+  if (budgetData.months[monthKey]) {
     return budgetData;
   }
 
   const existingKeys =
     Object.keys(
       budgetData.months
-    );
+    ).sort();
 
-  /*
-   * On prend le mois le plus proche
-   * comme modèle.
-   */
   const templateKey =
-    existingKeys
-      .sort()
-      .find(
-        (key) => key <= monthKey
-      ) ||
-    existingKeys.sort()[0];
+    existingKeys.find(
+      (key) => key <= monthKey
+    ) ||
+    existingKeys[0];
 
   const template =
     budgetData.months[
       templateKey
     ];
-
-  const newMonth =
-    createMonthFromTemplate(
-      template,
-      monthKey
-    );
 
   return {
     ...budgetData,
@@ -278,11 +188,14 @@ function ensureMonthExists(
     months: {
       ...budgetData.months,
 
-      [monthKey]: newMonth,
+      [monthKey]:
+        createMonthFromTemplate(
+          template,
+          monthKey
+        ),
     },
   };
 }
-
 
 /* ============================================================
    APPLICATION
@@ -298,16 +211,10 @@ function App() {
   const [showAddModal, setShowAddModal] =
     useState(false);
 
-
-  /*
-   * Le mois actuellement sélectionné.
-   */
-
   const currentMonth =
     data.months[
       data.currentMonth
     ];
-
 
   /* ==========================================================
      SAUVEGARDE
@@ -322,12 +229,13 @@ function App() {
     );
   };
 
-
   /* ==========================================================
-     NAVIGATION ENTRE LES MOIS
+     NAVIGATION MOIS
   ========================================================== */
 
-  const changeMonth = (direction) => {
+  const changeMonth = (
+    direction
+  ) => {
     const newMonthKey =
       shiftMonth(
         data.currentMonth,
@@ -340,22 +248,21 @@ function App() {
         newMonthKey
       );
 
-    const newData = {
+    saveData({
       ...preparedData,
-
       currentMonth:
         newMonthKey,
-    };
-
-    saveData(newData);
+    });
   };
-
 
   /* ==========================================================
      CALCULS FINANCIERS
   ========================================================== */
 
   const totals = useMemo(() => {
+    /* ------------------------------
+       REVENUS
+    ------------------------------ */
 
     const incomePlanned =
       currentMonth.income.reduce(
@@ -367,7 +274,6 @@ function App() {
         0
       );
 
-
     const incomeActual =
       currentMonth.income.reduce(
         (sum, item) =>
@@ -378,6 +284,13 @@ function App() {
         0
       );
 
+    const incomeDifference =
+      incomeActual -
+      incomePlanned;
+
+    /* ------------------------------
+       CHARGES FIXES
+    ------------------------------ */
 
     const fixedPlanned =
       currentMonth.fixedExpenses.reduce(
@@ -389,7 +302,6 @@ function App() {
         0
       );
 
-
     const fixedActual =
       currentMonth.fixedExpenses.reduce(
         (sum, item) =>
@@ -399,25 +311,30 @@ function App() {
           ),
         0
       );
-const fixedRemaining =
-  currentMonth.fixedExpenses.reduce(
-    (sum, item) =>
-      sum +
-      Math.max(
-        Number(item.planned || 0) -
-          Number(item.actual || 0),
+
+    const fixedRemaining =
+      currentMonth.fixedExpenses.reduce(
+        (sum, item) =>
+          sum +
+          Math.max(
+            Number(
+              item.planned || 0
+            ) -
+              Number(
+                item.actual || 0
+              ),
+            0
+          ),
         0
-      ),
-    0
-  );
+      );
 
-const incomeDifference =
-  incomeActual -
-  incomePlanned;
+    const fixedDifference =
+      fixedActual -
+      fixedPlanned;
 
-const fixedDifference =
-  fixedActual -
-  fixedPlanned;
+    /* ------------------------------
+       ENVELOPPES
+    ------------------------------ */
 
     const envelopeBudget =
       currentMonth.envelopes.reduce(
@@ -429,7 +346,6 @@ const fixedDifference =
         0
       );
 
-
     const envelopeSpent =
       currentMonth.envelopes.reduce(
         (sum, item) =>
@@ -439,7 +355,6 @@ const fixedDifference =
           ),
         0
       );
-
 
     const envelopeRemaining =
       currentMonth.envelopes.reduce(
@@ -457,7 +372,6 @@ const fixedDifference =
         0
       );
 
-
     const overBudget =
       currentMonth.envelopes.reduce(
         (sum, item) =>
@@ -474,6 +388,9 @@ const fixedDifference =
         0
       );
 
+    /* ------------------------------
+       ÉPARGNE
+    ------------------------------ */
 
     const savingsEnvelopes =
       currentMonth.envelopes.filter(
@@ -481,7 +398,6 @@ const fixedDifference =
           item.name ===
           "Épargne"
       );
-
 
     const savings =
       savingsEnvelopes.reduce(
@@ -493,7 +409,6 @@ const fixedDifference =
         0
       );
 
-
     const savingsBudget =
       savingsEnvelopes.reduce(
         (sum, item) =>
@@ -504,6 +419,9 @@ const fixedDifference =
         0
       );
 
+    /* ------------------------------
+       ENVELOPPES VARIABLES
+    ------------------------------ */
 
     const variableEnvelopes =
       currentMonth.envelopes.filter(
@@ -511,7 +429,6 @@ const fixedDifference =
           item.name !==
           "Épargne"
       );
-
 
     const variableBudget =
       variableEnvelopes.reduce(
@@ -523,7 +440,6 @@ const fixedDifference =
         0
       );
 
-
     const variableSpent =
       variableEnvelopes.reduce(
         (sum, item) =>
@@ -534,49 +450,49 @@ const fixedDifference =
         0
       );
 
+    /* ------------------------------
+       SYNTHÈSE
+    ------------------------------ */
 
     const actualExpenses =
       fixedActual +
       variableSpent;
 
-
     const plannedExpenses =
       fixedPlanned +
       variableBudget;
 
-
     /*
      * Argent réellement disponible
-     * maintenant.
+     * à l'instant présent.
      */
-
     const availableNow =
       incomeActual -
       fixedActual -
       envelopeSpent;
 
+    /*
+     * Argent restant après paiement
+     * des charges fixes encore dues.
+     */
+    const availableAfterFixed =
+      incomeActual -
+      fixedRemaining -
+      envelopeSpent;
 
     /*
-     * Argent qui devrait rester
-     * après consommation du budget
-     * encore disponible.
+     * Prévision après consommation
+     * du budget restant.
      */
-
     const forecastEnd =
       availableNow -
       envelopeRemaining;
-
-
-    /*
-     * Prévision initiale du mois.
-     */
 
     const plannedEnd =
       incomePlanned -
       fixedPlanned -
       variableBudget -
       savingsBudget;
-
 
     const expenseRate =
       incomeActual === 0
@@ -585,16 +501,15 @@ const fixedDifference =
             incomeActual) *
           100;
 
+    return {
+      incomePlanned,
+      incomeActual,
+      incomeDifference,
 
-   return {
-  incomePlanned,
-  incomeActual,
-  incomeDifference,
-
-  fixedPlanned,
-  fixedActual,
-  fixedRemaining,
-  fixedDifference,
+      fixedPlanned,
+      fixedActual,
+      fixedRemaining,
+      fixedDifference,
 
       envelopeBudget,
       envelopeSpent,
@@ -610,24 +525,22 @@ const fixedDifference =
       plannedExpenses,
 
       availableNow,
+      availableAfterFixed,
       forecastEnd,
       plannedEnd,
 
       overBudget,
       expenseRate,
     };
-
   }, [currentMonth]);
 
-
   /* ==========================================================
-     AJOUT D'UNE TRANSACTION
+     AJOUT TRANSACTION
   ========================================================== */
 
   const addTransaction = (
     transaction
   ) => {
-
     const month =
       data.months[
         data.currentMonth
@@ -638,68 +551,85 @@ const fixedDifference =
         transaction.amount
       );
 
-
     const newTransaction = {
       ...transaction,
-
       id: `tx-${Date.now()}`,
-
       amount,
     };
-
 
     let updatedMonth = {
       ...month,
 
       transactions: [
         ...month.transactions,
-
         newTransaction,
       ],
     };
 
-
-    /*
-     * Une dépense augmente
-     * automatiquement l'enveloppe
-     * correspondante.
-     */
+    /* ------------------------------
+       DÉPENSE
+    ------------------------------ */
 
     if (
       transaction.type ===
       "expense"
     ) {
+      /*
+       * CHARGE FIXE
+       */
+      if (
+        transaction.category ===
+        "Charges fixes"
+      ) {
+        updatedMonth.fixedExpenses =
+          month.fixedExpenses.map(
+            (expense) =>
+              expense.id ===
+              transaction.fixedExpenseId
+                ? {
+                    ...expense,
 
-      updatedMonth.envelopes =
-        month.envelopes.map(
-          (envelope) =>
-            envelope.name ===
-            transaction.category
-              ? {
-                  ...envelope,
+                    actual:
+                      Number(
+                        expense.actual ||
+                          0
+                      ) +
+                      amount,
+                  }
+                : expense
+          );
+      } else {
+        /*
+         * ENVELOPPE VARIABLE
+         */
+        updatedMonth.envelopes =
+          month.envelopes.map(
+            (envelope) =>
+              envelope.name ===
+              transaction.category
+                ? {
+                    ...envelope,
 
-                  spent:
-                    Number(
-                      envelope.spent ||
-                        0
-                    ) +
-                    amount,
-                }
-              : envelope
-        );
+                    spent:
+                      Number(
+                        envelope.spent ||
+                          0
+                      ) +
+                      amount,
+                  }
+                : envelope
+          );
+      }
     }
 
-
-    /*
-     * Un revenu ajouté est
-     * enregistré dans les revenus.
-     */
+    /* ------------------------------
+       REVENU
+    ------------------------------ */
 
     if (
       transaction.type ===
       "income"
     ) {
-
       updatedMonth.income = [
         ...month.income,
 
@@ -719,8 +649,7 @@ const fixedDifference =
       ];
     }
 
-
-    const newData = {
+    saveData({
       ...data,
 
       months: {
@@ -729,31 +658,23 @@ const fixedDifference =
         [data.currentMonth]:
           updatedMonth,
       },
-    };
-
-
-    saveData(newData);
+    });
 
     setShowAddModal(false);
   };
 
-
   /* ==========================================================
-     AFFICHAGE
+     RENDU
   ========================================================== */
 
   return (
     <div className="app">
 
-
-      {/* ======================================================
-          HEADER
-      ====================================================== */}
+      {/* HEADER */}
 
       <header className="topbar">
 
         <div>
-
           <h1>
             Mon Budget
           </h1>
@@ -761,9 +682,7 @@ const fixedDifference =
           <span className="subtitle">
             Pilotage financier personnel
           </span>
-
         </div>
-
 
         <button
           className="icon-button"
@@ -774,10 +693,7 @@ const fixedDifference =
 
       </header>
 
-
-      {/* ======================================================
-          CONTENU
-      ====================================================== */}
+      {/* CONTENU */}
 
       <main className="main">
 
@@ -810,7 +726,6 @@ const fixedDifference =
 
         )}
 
-
         {activePage ===
           "budget" && (
 
@@ -826,7 +741,6 @@ const fixedDifference =
 
         )}
 
-
         {activePage ===
           "transactions" && (
 
@@ -838,7 +752,6 @@ const fixedDifference =
 
         )}
 
-
         {activePage ===
           "goals" && (
 
@@ -849,7 +762,6 @@ const fixedDifference =
           />
 
         )}
-
 
         {activePage ===
           "analysis" && (
@@ -868,25 +780,21 @@ const fixedDifference =
 
       </main>
 
-
-      {/* ======================================================
-          BOUTON AJOUT
-      ====================================================== */}
+      {/* BOUTON AJOUT */}
 
       <button
         className="floating-button"
         onClick={() =>
-          setShowAddModal(true)
+          setShowAddModal(
+            true
+          )
         }
         aria-label="Ajouter"
       >
         <Plus size={25} />
       </button>
 
-
-      {/* ======================================================
-          NAVIGATION
-      ====================================================== */}
+      {/* NAVIGATION */}
 
       <nav className="bottom-nav">
 
@@ -895,15 +803,12 @@ const fixedDifference =
             activePage ===
             "dashboard"
           }
-
           icon={
             <LayoutDashboard
               size={21}
             />
           }
-
           label="Accueil"
-
           onClick={() =>
             setActivePage(
               "dashboard"
@@ -911,21 +816,17 @@ const fixedDifference =
           }
         />
 
-
         <NavButton
           active={
             activePage ===
             "budget"
           }
-
           icon={
             <WalletCards
               size={21}
             />
           }
-
           label="Budget"
-
           onClick={() =>
             setActivePage(
               "budget"
@@ -933,24 +834,19 @@ const fixedDifference =
           }
         />
 
-
         <div className="nav-spacer" />
-
 
         <NavButton
           active={
             activePage ===
             "transactions"
           }
-
           icon={
             <Receipt
               size={21}
             />
           }
-
           label="Dépenses"
-
           onClick={() =>
             setActivePage(
               "transactions"
@@ -958,21 +854,17 @@ const fixedDifference =
           }
         />
 
-
         <NavButton
           active={
             activePage ===
             "goals"
           }
-
           icon={
             <Target
               size={21}
             />
           }
-
           label="Objectifs"
-
           onClick={() =>
             setActivePage(
               "goals"
@@ -982,15 +874,11 @@ const fixedDifference =
 
       </nav>
 
-
-      {/* ======================================================
-          MODALE
-      ====================================================== */}
+      {/* MODALE */}
 
       {showAddModal && (
 
         <AddTransactionModal
-
           onClose={() =>
             setShowAddModal(
               false
@@ -1005,6 +893,9 @@ const fixedDifference =
             currentMonth.envelopes
           }
 
+          fixedExpenses={
+            currentMonth.fixedExpenses
+          }
         />
 
       )}
@@ -1013,9 +904,8 @@ const fixedDifference =
   );
 }
 
-
 /* ============================================================
-   BOUTON DE NAVIGATION
+   NAVIGATION
 ============================================================ */
 
 function NavButton({
@@ -1024,32 +914,25 @@ function NavButton({
   label,
   onClick,
 }) {
-
   return (
-
     <button
       className={`nav-button ${
         active
           ? "active"
           : ""
       }`}
-
       onClick={
         onClick
       }
     >
-
       {icon}
 
       <span>
         {label}
       </span>
-
     </button>
-
   );
 }
-
 
 /* ============================================================
    DASHBOARD
@@ -1062,7 +945,6 @@ function Dashboard({
   onPreviousMonth,
   onNextMonth,
 }) {
-
   const alerts =
     month.envelopes.filter(
       (item) =>
@@ -1077,46 +959,32 @@ function Dashboard({
           )
     );
 
-
   const hasNegativeAvailable =
     totals.availableNow <
     0;
-
 
   const forecastIsNegative =
     totals.forecastEnd <
     0;
 
-
   return (
-
     <div className="page">
 
-
-      {/* ==================================================
-          NAVIGATION MOIS
-      ================================================== */}
+      {/* MOIS */}
 
       <MonthSelector
-
         label={
           month.label
         }
-
         onPrevious={
           onPreviousMonth
         }
-
         onNext={
           onNextMonth
         }
-
       />
 
-
-      {/* ==================================================
-          INDICATEUR PRINCIPAL
-      ================================================== */}
+      {/* DISPONIBLE */}
 
       <section className="hero-card">
 
@@ -1133,159 +1001,241 @@ function Dashboard({
           </strong>
 
           <small>
-            Si tu respectes encore ton
-            budget, il devrait rester{" "}
-
+            Après paiement des charges
+            encore dues :{" "}
             <b>
               {formatMoney(
-                totals.forecastEnd
+                totals.availableAfterFixed
               )}
             </b>
-
-            {" "}en fin de mois.
           </small>
 
         </div>
 
-
         <div className="hero-icon">
-
           <WalletCards
             size={30}
           />
-
         </div>
 
       </section>
 
-
-      {/* ==================================================
-          INDICATEURS
-      ================================================== */}
+      {/* STATS */}
 
       <section className="stats-grid">
 
         <StatCard
-
           title="Revenus encaissés"
-
           value={
             totals.incomeActual
           }
-
           planned={
             totals.incomePlanned
           }
-
+          difference={
+            totals.incomeDifference
+          }
           icon={
             <ArrowUp
               size={18}
             />
           }
-
           positive
-
         />
 
-
         <StatCard
-
           title="Dépenses réelles"
-
           value={
             totals.actualExpenses
           }
-
           planned={
             totals.plannedExpenses
           }
-
           icon={
             <ArrowDown
               size={18}
             />
           }
-
         />
 
-
         <StatCard
-
           title="Épargne"
-
           value={
             totals.savings
           }
-
           planned={
             totals.savingsBudget
           }
-
           icon={
             <PiggyBank
               size={18}
             />
           }
-
           positive
-
         />
 
       </section>
 
+      {/* REVENUS */}
 
-      {/* ==================================================
-          SYNTHÈSE
-      ================================================== */}
+      <SectionTitle
+        title="Revenus"
+      />
 
-      <section className="summary-card">
+      <div className="simple-list">
 
-        <div>
+        {month.income.map(
+          (income) => {
+
+            const difference =
+              Number(
+                income.actual || 0
+              ) -
+              Number(
+                income.planned || 0
+              );
+
+            return (
+              <div
+                className="simple-row"
+                key={
+                  income.id
+                }
+              >
+
+                <div>
+
+                  <strong>
+                    {income.label}
+                  </strong>
+
+                  <small>
+                    Prévu :{" "}
+                    {formatMoney(
+                      income.planned
+                    )}
+                  </small>
+
+                </div>
+
+                <div>
+
+                  <strong>
+                    {formatMoney(
+                      income.actual
+                    )}
+                  </strong>
+
+                  <small
+                    className={
+                      difference <
+                      0
+                        ? "warning-text"
+                        : ""
+                    }
+                  >
+                    {difference ===
+                    0
+                      ? "Conforme"
+                      : difference >
+                        0
+                      ? `+${formatMoney(
+                          difference
+                        )}`
+                      : formatMoney(
+                          difference
+                        )}
+                  </small>
+
+                </div>
+
+              </div>
+            );
+          }
+        )}
+
+      </div>
+
+      {/* CHARGES FIXES */}
+
+      <SectionTitle
+        title="Charges fixes"
+      />
+
+      <section className="fixed-summary-card">
+
+        <div className="fixed-summary-header">
+
+          <div>
+            <span>
+              Prévu
+            </span>
+
+            <strong>
+              {formatMoney(
+                totals.fixedPlanned
+              )}
+            </strong>
+          </div>
+
+          <div>
+            <span>
+              Payé
+            </span>
+
+            <strong>
+              {formatMoney(
+                totals.fixedActual
+              )}
+            </strong>
+          </div>
+
+          <div>
+            <span>
+              Reste à payer
+            </span>
+
+            <strong>
+              {formatMoney(
+                totals.fixedRemaining
+              )}
+            </strong>
+          </div>
+
+        </div>
+
+        <div className="progress">
+
+          <div
+            className="progress-bar normal"
+            style={{
+              width: `${
+                totals.fixedPlanned ===
+                0
+                  ? 0
+                  : Math.min(
+                      (
+                        totals.fixedActual /
+                        totals.fixedPlanned
+                      ) *
+                        100,
+                      100
+                    )
+              }%`,
+            }}
+          />
+
+        </div>
+
+        <div className="fixed-summary-footer">
 
           <span>
-            Disponible maintenant
+            Après paiement des charges fixes
           </span>
 
           <strong>
             {formatMoney(
-              totals.availableNow
-            )}
-          </strong>
-
-        </div>
-
-
-        <div>
-
-          <span>
-            Encore à prévoir
-          </span>
-
-          <strong>
-            {formatMoney(
-              totals.envelopeRemaining
-            )}
-          </strong>
-
-        </div>
-
-
-        <div>
-
-          <span>
-            Dépassements
-          </span>
-
-          <strong
-            className={
-              totals.overBudget >
-              0
-                ? "danger-text"
-                : ""
-            }
-          >
-            {formatMoney(
-              totals.overBudget
+              totals.availableAfterFixed
             )}
           </strong>
 
@@ -1293,15 +1243,110 @@ function Dashboard({
 
       </section>
 
+      {/* DETAIL CHARGES FIXES */}
 
-      {/* ==================================================
-          ENVELOPPES
-      ================================================== */}
+      <div className="simple-list">
+
+        {month.fixedExpenses.map(
+          (expense) => {
+
+            const planned =
+              Number(
+                expense.planned ||
+                  0
+              );
+
+            const actual =
+              Number(
+                expense.actual ||
+                  0
+              );
+
+            const remaining =
+              Math.max(
+                planned -
+                  actual,
+                0
+              );
+
+            const difference =
+              actual -
+              planned;
+
+            return (
+
+              <div
+                className="simple-row"
+                key={
+                  expense.id
+                }
+              >
+
+                <div>
+
+                  <strong>
+                    {expense.label}
+                  </strong>
+
+                  <small>
+                    Prévu :{" "}
+                    {formatMoney(
+                      planned
+                    )}
+                  </small>
+
+                </div>
+
+                <div>
+
+                  <strong
+                    className={
+                      difference >
+                      0
+                        ? "danger-text"
+                        : remaining >
+                          0
+                        ? "warning-text"
+                        : ""
+                    }
+                  >
+
+                    {difference >
+                    0
+                      ? `+${formatMoney(
+                          difference
+                        )}`
+                      : remaining >
+                        0
+                      ? `Reste ${formatMoney(
+                          remaining
+                        )}`
+                      : "Payé"}
+
+                  </strong>
+
+                  <small>
+                    Réel :{" "}
+                    {formatMoney(
+                      actual
+                    )}
+                  </small>
+
+                </div>
+
+              </div>
+
+            );
+          }
+        )}
+
+      </div>
+
+      {/* ENVELOPPES */}
 
       <SectionTitle
         title="Enveloppes"
       />
-
 
       <div className="envelope-list">
 
@@ -1309,15 +1354,12 @@ function Dashboard({
           (envelope) => (
 
             <EnvelopeCard
-
               key={
                 envelope.id
               }
-
               envelope={
                 envelope
               }
-
             />
 
           )
@@ -1325,15 +1367,11 @@ function Dashboard({
 
       </div>
 
-
-      {/* ==================================================
-          ÉTAT DU MOIS
-      ================================================== */}
+      {/* ÉTAT */}
 
       <SectionTitle
         title="État du mois"
       />
-
 
       {hasNegativeAvailable ? (
 
@@ -1373,10 +1411,9 @@ function Dashboard({
             </strong>
 
             <p>
-              Si tu dépenses tout ce qui
-              reste dans les enveloppes,
-              le budget prévisionnel devient
-              négatif.
+              Le budget devient négatif
+              si toutes les enveloppes
+              restantes sont consommées.
             </p>
 
           </div>
@@ -1425,12 +1462,10 @@ function Dashboard({
 
       )}
 
+      {/* ALERTES */}
 
-      {/* ==================================================
-          ALERTES ENVELOPPES
-      ================================================== */}
-
-      {alerts.length > 0 && (
+      {alerts.length >
+        0 && (
 
         <div
           className="alert-list"
@@ -1490,11 +1525,6 @@ function Dashboard({
 
       )}
 
-
-      {/* ==================================================
-          AJOUT
-      ================================================== */}
-
       <button
         className="primary-button full"
         onClick={
@@ -1514,7 +1544,6 @@ function Dashboard({
   );
 }
 
-
 /* ============================================================
    SÉLECTEUR DE MOIS
 ============================================================ */
@@ -1524,9 +1553,7 @@ function MonthSelector({
   onPrevious,
   onNext,
 }) {
-
   return (
-
     <div className="month-selector">
 
       <button
@@ -1536,18 +1563,14 @@ function MonthSelector({
         }
         type="button"
       >
-
         <ChevronLeft
           size={20}
         />
-
       </button>
-
 
       <strong>
         {label}
       </strong>
-
 
       <button
         aria-label="Mois suivant"
@@ -1556,17 +1579,14 @@ function MonthSelector({
         }
         type="button"
       >
-
         <ChevronRight
           size={20}
         />
-
       </button>
 
     </div>
   );
 }
-
 
 /* ============================================================
    CARTE STATISTIQUE
@@ -1576,12 +1596,11 @@ function StatCard({
   title,
   value,
   planned,
+  difference,
   icon,
   positive,
 }) {
-
   return (
-
     <div className="stat-card">
 
       <div className="stat-header">
@@ -1590,7 +1609,6 @@ function StatCard({
           {title}
         </span>
 
-
         <div
           className={
             positive
@@ -1598,20 +1616,16 @@ function StatCard({
               : "stat-icon"
           }
         >
-
           {icon}
-
         </div>
 
       </div>
-
 
       <strong>
         {formatMoney(
           value
         )}
       </strong>
-
 
       {planned !==
         undefined && (
@@ -1625,10 +1639,37 @@ function StatCard({
 
       )}
 
+      {difference !==
+        undefined &&
+        difference !==
+          0 && (
+
+        <small
+          className={
+            difference <
+            0
+              ? "warning-text"
+              : "positive-text"
+          }
+        >
+
+          Écart :{" "}
+          {difference >
+          0
+            ? "+"
+            : ""}
+
+          {formatMoney(
+            difference
+          )}
+
+        </small>
+
+      )}
+
     </div>
   );
 }
-
 
 /* ============================================================
    ENVELOPPE
@@ -1637,18 +1678,15 @@ function StatCard({
 function EnvelopeCard({
   envelope,
 }) {
-
   const budget =
     Number(
       envelope.budget || 0
     );
 
-
   const spent =
     Number(
       envelope.spent || 0
     );
-
 
   const percentage =
     budget === 0
@@ -1657,7 +1695,6 @@ function EnvelopeCard({
           budget) *
         100;
 
-
   const status =
     percentage >= 100
       ? "danger"
@@ -1665,13 +1702,10 @@ function EnvelopeCard({
       ? "warning"
       : "normal";
 
-
   const difference =
     budget - spent;
 
-
   return (
-
     <div className="envelope-card">
 
       <div className="envelope-top">
@@ -1681,21 +1715,16 @@ function EnvelopeCard({
         </strong>
 
         <span>
-
           {formatMoney(
             spent
           )}
-
           {" / "}
-
           {formatMoney(
             budget
           )}
-
         </span>
 
       </div>
-
 
       <div className="progress">
 
@@ -1714,7 +1743,6 @@ function EnvelopeCard({
 
       </div>
 
-
       <div className="envelope-bottom">
 
         <span>
@@ -1723,16 +1751,17 @@ function EnvelopeCard({
           )} %
         </span>
 
-
         <span
           className={
-            difference < 0
+            difference <
+            0
               ? "danger-text"
               : ""
           }
         >
 
-          {difference < 0
+          {difference <
+          0
             ? `+${formatMoney(
                 Math.abs(
                   difference
@@ -1750,56 +1779,39 @@ function EnvelopeCard({
   );
 }
 
-
 /* ============================================================
-   TITRE DE SECTION
+   TITRE SECTION
 ============================================================ */
 
 function SectionTitle({
   title,
-  action,
 }) {
-
   return (
-
     <div className="section-title">
 
       <h2>
         {title}
       </h2>
 
-
-      {action && (
-
-        <button>
-          {action}
-        </button>
-
-      )}
-
     </div>
   );
 }
 
-
 /* ============================================================
-   PAGE BUDGET
+   BUDGET
 ============================================================ */
 
 function Budget({
   month,
   totals,
 }) {
-
   return (
-
     <div className="page">
 
       <PageTitle
         title="Budget"
         subtitle="Prévu contre réel"
       />
-
 
       <section className="summary-card">
 
@@ -1817,7 +1829,6 @@ function Budget({
 
         </div>
 
-
         <div>
 
           <span>
@@ -1832,16 +1843,15 @@ function Budget({
 
         </div>
 
-
         <div>
 
           <span>
-            Disponible
+            Charges restantes
           </span>
 
           <strong>
             {formatMoney(
-              totals.availableNow
+              totals.fixedRemaining
             )}
           </strong>
 
@@ -1849,11 +1859,9 @@ function Budget({
 
       </section>
 
-
       <SectionTitle
         title="Charges fixes"
       />
-
 
       <div className="simple-list">
 
@@ -1870,7 +1878,6 @@ function Budget({
               <span>
                 {expense.label}
               </span>
-
 
               <div>
 
@@ -1896,11 +1903,9 @@ function Budget({
 
       </div>
 
-
       <SectionTitle
         title="Enveloppes"
       />
-
 
       <div className="simple-list">
 
@@ -1917,7 +1922,6 @@ function Budget({
               <span>
                 {envelope.name}
               </span>
-
 
               <div>
 
@@ -1947,7 +1951,6 @@ function Budget({
   );
 }
 
-
 /* ============================================================
    TRANSACTIONS
 ============================================================ */
@@ -1955,16 +1958,13 @@ function Budget({
 function Transactions({
   transactions,
 }) {
-
   return (
-
     <div className="page">
 
       <PageTitle
         title="Transactions"
         subtitle="Vos mouvements récents"
       />
-
 
       <div className="transaction-list">
 
@@ -1999,7 +1999,6 @@ function Transactions({
 
                 </div>
 
-
                 <div className="transaction-info">
 
                   <strong>
@@ -2007,19 +2006,14 @@ function Transactions({
                   </strong>
 
                   <span>
-
                     {formatDate(
                       transaction.date
                     )}
-
                     {" · "}
-
                     {transaction.payment}
-
                   </span>
 
                 </div>
-
 
                 <strong
                   className={
@@ -2052,7 +2046,6 @@ function Transactions({
   );
 }
 
-
 /* ============================================================
    OBJECTIFS
 ============================================================ */
@@ -2060,16 +2053,13 @@ function Transactions({
 function Goals({
   goals,
 }) {
-
   return (
-
     <div className="page">
 
       <PageTitle
         title="Objectifs"
         subtitle="Construire les projets futurs"
       />
-
 
       <div className="goal-list">
 
@@ -2083,7 +2073,6 @@ function Goals({
                 : (goal.current /
                     goal.target) *
                   100;
-
 
             return (
 
@@ -2111,13 +2100,11 @@ function Goals({
 
                   </div>
 
-
                   <Target
                     size={22}
                   />
 
                 </div>
-
 
                 <div className="progress">
 
@@ -2132,7 +2119,6 @@ function Goals({
                   />
 
                 </div>
-
 
                 <div className="goal-values">
 
@@ -2149,7 +2135,6 @@ function Goals({
                   </span>
 
                 </div>
-
 
                 <div className="goal-footer">
 
@@ -2182,7 +2167,6 @@ function Goals({
   );
 }
 
-
 /* ============================================================
    ANALYSE
 ============================================================ */
@@ -2191,7 +2175,6 @@ function Analysis({
   month,
   totals,
 }) {
-
   const monitoredEnvelopes =
     month.envelopes.filter(
       (item) => {
@@ -2215,16 +2198,13 @@ function Analysis({
       }
     );
 
-
   return (
-
     <div className="page">
 
       <PageTitle
         title="Analyse"
         subtitle="Comprendre votre mois"
       />
-
 
       <section className="analysis-card">
 
@@ -2246,13 +2226,11 @@ function Analysis({
 
       </section>
 
-
       <section className="analysis-card">
 
         <h3>
           Situation
         </h3>
-
 
         <div className="analysis-row">
 
@@ -2268,7 +2246,6 @@ function Analysis({
 
         </div>
 
-
         <div className="analysis-row">
 
           <span>
@@ -2282,7 +2259,6 @@ function Analysis({
           </strong>
 
         </div>
-
 
         <div className="analysis-row">
 
@@ -2298,31 +2274,29 @@ function Analysis({
 
         </div>
 
-
         <div className="analysis-row">
 
           <span>
-            Disponible maintenant
+            Charges encore à payer
           </span>
 
           <strong>
             {formatMoney(
-              totals.availableNow
+              totals.fixedRemaining
             )}
           </strong>
 
         </div>
 
-
         <div className="analysis-row total">
 
           <span>
-            Prévision fin de mois
+            Disponible après charges fixes
           </span>
 
           <strong>
             {formatMoney(
-              totals.forecastEnd
+              totals.availableAfterFixed
             )}
           </strong>
 
@@ -2330,13 +2304,11 @@ function Analysis({
 
       </section>
 
-
       <section className="analysis-card">
 
         <h3>
           Enveloppes à surveiller
         </h3>
-
 
         {monitoredEnvelopes.length ===
         0 ? (
@@ -2367,7 +2339,6 @@ function Analysis({
                 Number(
                   item.spent || 0
                 );
-
 
               return (
 
@@ -2408,18 +2379,15 @@ function Analysis({
   );
 }
 
-
 /* ============================================================
-   TITRE DE PAGE
+   TITRE PAGE
 ============================================================ */
 
 function PageTitle({
   title,
   subtitle,
 }) {
-
   return (
-
     <div className="page-title">
 
       <h2>
@@ -2434,7 +2402,6 @@ function PageTitle({
   );
 }
 
-
 /* ============================================================
    MODALE AJOUT DÉPENSE
 ============================================================ */
@@ -2443,20 +2410,14 @@ function AddTransactionModal({
   onClose,
   onSave,
   envelopes,
+  fixedExpenses,
 }) {
-
-  /*
-   * L'épargne n'est pas proposée comme
-   * catégorie de dépense courante.
-   */
-
   const availableEnvelopes =
     envelopes.filter(
       (item) =>
         item.name !==
         "Épargne"
     );
-
 
   const [form, setForm] =
     useState({
@@ -2468,8 +2429,12 @@ function AddTransactionModal({
       category:
         availableEnvelopes[0]
           ?.name ||
-        envelopes[0]?.name ||
         "Autre",
+
+      fixedExpenseId:
+        fixedExpenses[0]
+          ?.id ||
+        "",
 
       payment:
         "Carte bancaire",
@@ -2481,6 +2446,9 @@ function AddTransactionModal({
 
     });
 
+  const isFixed =
+    form.category ===
+    "Charges fixes";
 
   const submit = (
     event
@@ -2488,9 +2456,7 @@ function AddTransactionModal({
 
     event.preventDefault();
 
-
     if (
-      !form.label ||
       !form.amount ||
       Number(
         form.amount
@@ -2499,10 +2465,29 @@ function AddTransactionModal({
       return;
     }
 
+    const fixedExpense =
+      fixedExpenses.find(
+        (item) =>
+          item.id ===
+          form.fixedExpenseId
+      );
+
+    const finalLabel =
+      isFixed &&
+      fixedExpense
+        ? fixedExpense.label
+        : form.label;
+
+    if (!finalLabel) {
+      return;
+    }
 
     onSave({
 
       ...form,
+
+      label:
+        finalLabel,
 
       type:
         "expense",
@@ -2512,12 +2497,13 @@ function AddTransactionModal({
           form.amount
         ),
 
+      category:
+        form.category,
+
     });
   };
 
-
   return (
-
     <div
       className="modal-overlay"
       onClick={
@@ -2534,7 +2520,6 @@ function AddTransactionModal({
         }
       >
 
-
         <div className="modal-header">
 
           <div>
@@ -2548,7 +2533,6 @@ function AddTransactionModal({
             </span>
 
           </div>
-
 
           <button
             className="icon-button"
@@ -2566,99 +2550,84 @@ function AddTransactionModal({
 
         </div>
 
-
         <form
           onSubmit={
             submit
           }
         >
 
+          {!isFixed && (
 
-          <label>
+            <label>
 
-            Libellé
+              Libellé
 
-            <input
+              <input
+                value={
+                  form.label
+                }
+                onChange={(
+                  event
+                ) =>
+                  setForm({
+                    ...form,
+                    label:
+                      event.target
+                        .value,
+                  })
+                }
+                placeholder="Ex : Carrefour"
+                autoFocus
+              />
 
-              value={
-                form.label
-              }
+            </label>
 
-              onChange={(
-                e
-              ) =>
-                setForm({
-                  ...form,
-
-                  label:
-                    e.target.value,
-                })
-              }
-
-              placeholder="Ex : Carrefour"
-
-              autoFocus
-
-            />
-
-          </label>
-
+          )}
 
           <label>
 
             Montant
 
             <input
-
               type="number"
-
               step="0.01"
-
               min="0"
-
               value={
                 form.amount
               }
-
               onChange={(
-                e
+                event
               ) =>
                 setForm({
                   ...form,
-
                   amount:
-                    e.target.value,
+                    event.target
+                      .value,
                 })
               }
-
               placeholder="0,00"
-
             />
 
           </label>
-
 
           <label>
 
             Catégorie
 
             <select
-
               value={
                 form.category
               }
-
               onChange={(
-                e
+                event
               ) =>
                 setForm({
                   ...form,
-
                   category:
-                    e.target.value,
+                    event.target
+                      .value,
                 })
               }
-
             >
 
               {availableEnvelopes.map(
@@ -2680,39 +2649,79 @@ function AddTransactionModal({
                 )
               )}
 
-
               <option value="Charges fixes">
-
                 Charges fixes
-
               </option>
 
             </select>
 
           </label>
 
+          {isFixed && (
+
+            <label>
+
+              Charge fixe
+
+              <select
+                value={
+                  form.fixedExpenseId
+                }
+                onChange={(
+                  event
+                ) =>
+                  setForm({
+                    ...form,
+                    fixedExpenseId:
+                      event.target
+                        .value,
+                  })
+                }
+              >
+
+                {fixedExpenses.map(
+                  (expense) => (
+
+                    <option
+                      key={
+                        expense.id
+                      }
+                      value={
+                        expense.id
+                      }
+                    >
+
+                      {expense.label}
+
+                    </option>
+
+                  )
+                )}
+
+              </select>
+
+            </label>
+
+          )}
 
           <label>
 
             Moyen de paiement
 
             <select
-
               value={
                 form.payment
               }
-
               onChange={(
-                e
+                event
               ) =>
                 setForm({
                   ...form,
-
                   payment:
-                    e.target.value,
+                    event.target
+                      .value,
                 })
               }
-
             >
 
               <option>
@@ -2743,34 +2752,28 @@ function AddTransactionModal({
 
           </label>
 
-
           <label>
 
             Date
 
             <input
-
               type="date"
-
               value={
                 form.date
               }
-
               onChange={(
-                e
+                event
               ) =>
                 setForm({
                   ...form,
-
                   date:
-                    e.target.value,
+                    event.target
+                      .value,
                 })
               }
-
             />
 
           </label>
-
 
           <button
             className="primary-button full"
@@ -2781,7 +2784,6 @@ function AddTransactionModal({
 
           </button>
 
-
         </form>
 
       </div>
@@ -2789,6 +2791,5 @@ function AddTransactionModal({
     </div>
   );
 }
-
 
 export default App;
