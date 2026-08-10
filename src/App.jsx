@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   WalletCards,
   Target,
-  BarChart3,
   Plus,
   X,
   ArrowUp,
@@ -15,7 +14,7 @@ import {
   ChevronRight,
   Settings,
   Receipt,
-  PiggyBank
+  PiggyBank,
 } from "lucide-react";
 
 import { initialData } from "./data";
@@ -24,14 +23,14 @@ const formatMoney = (value) =>
   new Intl.NumberFormat("fr-FR", {
     style: "currency",
     currency: "EUR",
-    maximumFractionDigits: 2
-  }).format(value);
+    maximumFractionDigits: 2,
+  }).format(Number(value) || 0);
 
 const formatDate = (date) =>
   new Intl.DateTimeFormat("fr-FR", {
     day: "2-digit",
     month: "2-digit",
-    year: "numeric"
+    year: "numeric",
   }).format(new Date(date));
 
 function loadData() {
@@ -52,123 +51,244 @@ function App() {
   const [data, setData] = useState(loadData);
   const [activePage, setActivePage] = useState("dashboard");
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addType, setAddType] = useState("expense");
 
   const currentMonth = data.months[data.currentMonth];
 
   const saveData = (newData) => {
     setData(newData);
-
-    localStorage.setItem(
-      "mon-budget-data",
-      JSON.stringify(newData)
-    );
+    localStorage.setItem("mon-budget-data", JSON.stringify(newData));
   };
+
+  /*
+   * ============================================================
+   * CALCULS FINANCIERS
+   * ============================================================
+   *
+   * Nous séparons volontairement :
+   *
+   * 1. Le prévisionnel
+   * 2. Le réel
+   * 3. Le disponible maintenant
+   * 4. La prévision de fin de mois
+   */
 
   const totals = useMemo(() => {
     const incomePlanned = currentMonth.income.reduce(
-      (sum, item) => sum + item.planned,
+      (sum, item) => sum + Number(item.planned || 0),
       0
     );
 
     const incomeActual = currentMonth.income.reduce(
-      (sum, item) => sum + item.actual,
+      (sum, item) => sum + Number(item.actual || 0),
       0
     );
 
     const fixedPlanned = currentMonth.fixedExpenses.reduce(
-      (sum, item) => sum + item.planned,
+      (sum, item) => sum + Number(item.planned || 0),
       0
     );
 
     const fixedActual = currentMonth.fixedExpenses.reduce(
-      (sum, item) => sum + item.actual,
+      (sum, item) => sum + Number(item.actual || 0),
       0
     );
 
     const envelopeBudget = currentMonth.envelopes.reduce(
-      (sum, item) => sum + item.budget,
+      (sum, item) => sum + Number(item.budget || 0),
       0
     );
 
     const envelopeSpent = currentMonth.envelopes.reduce(
-      (sum, item) => sum + item.spent,
+      (sum, item) => sum + Number(item.spent || 0),
       0
     );
 
-    const savings = currentMonth.envelopes
-      .filter((item) => item.name === "Épargne")
-      .reduce((sum, item) => sum + item.spent, 0);
+    const envelopeRemaining = currentMonth.envelopes.reduce(
+      (sum, item) =>
+        sum +
+        Math.max(
+          Number(item.budget || 0) - Number(item.spent || 0),
+          0
+        ),
+      0
+    );
 
-    const totalActualExpenses =
-      fixedActual + envelopeSpent;
+    const overBudget = currentMonth.envelopes.reduce(
+      (sum, item) =>
+        sum +
+        Math.max(
+          Number(item.spent || 0) - Number(item.budget || 0),
+          0
+        ),
+      0
+    );
 
-    const remaining =
+    const savingsEnvelopes = currentMonth.envelopes.filter(
+      (item) => item.name === "Épargne"
+    );
+
+    const savings = savingsEnvelopes.reduce(
+      (sum, item) => sum + Number(item.spent || 0),
+      0
+    );
+
+    const savingsBudget = savingsEnvelopes.reduce(
+      (sum, item) => sum + Number(item.budget || 0),
+      0
+    );
+
+    const variableEnvelopes = currentMonth.envelopes.filter(
+      (item) => item.name !== "Épargne"
+    );
+
+    const variableBudget = variableEnvelopes.reduce(
+      (sum, item) => sum + Number(item.budget || 0),
+      0
+    );
+
+    const variableSpent = variableEnvelopes.reduce(
+      (sum, item) => sum + Number(item.spent || 0),
+      0
+    );
+
+    /*
+     * Dépenses réellement réalisées.
+     *
+     * On ne compte pas l'épargne comme une dépense de consommation.
+     */
+    const actualExpenses = fixedActual + variableSpent;
+
+    /*
+     * Dépenses prévues hors épargne.
+     */
+    const plannedExpenses = fixedPlanned + variableBudget;
+
+    /*
+     * ARGENT DISPONIBLE MAINTENANT
+     *
+     * Revenus effectivement encaissés
+     * - charges fixes effectivement payées
+     * - dépenses d'enveloppes effectivement réalisées
+     *
+     * L'épargne est considérée comme mise de côté et non disponible.
+     */
+    const availableNow =
       incomeActual -
-      totalActualExpenses;
+      fixedActual -
+      envelopeSpent;
 
-    const plannedRemaining =
+    /*
+     * ARGENT QUI RESTERAIT EN FIN DE MOIS
+     *
+     * Disponible maintenant
+     * - montant restant à consommer dans les enveloppes
+     *
+     * Cela permet de répondre à :
+     *
+     * "Si je respecte encore mon budget prévu,
+     * combien devrait-il me rester ?"
+     */
+    const forecastEnd =
+      availableNow - envelopeRemaining;
+
+    /*
+     * PRÉVISION INITIALE DU MOIS
+     */
+    const plannedEnd =
       incomePlanned -
       fixedPlanned -
-      envelopeBudget;
+      variableBudget -
+      savingsBudget;
+
+    const expenseRate =
+      incomeActual === 0
+        ? 0
+        : (actualExpenses / incomeActual) * 100;
 
     return {
       incomePlanned,
       incomeActual,
+
       fixedPlanned,
       fixedActual,
+
       envelopeBudget,
       envelopeSpent,
+      envelopeRemaining,
+
+      variableBudget,
+      variableSpent,
+
       savings,
-      remaining,
-      plannedRemaining,
-      totalActualExpenses
+      savingsBudget,
+
+      actualExpenses,
+      plannedExpenses,
+
+      availableNow,
+      forecastEnd,
+      plannedEnd,
+
+      overBudget,
+      expenseRate,
     };
   }, [currentMonth]);
+
+  /*
+   * ============================================================
+   * AJOUT D'UNE TRANSACTION
+   * ============================================================
+   */
 
   const addTransaction = (transaction) => {
     const month = data.months[data.currentMonth];
 
+    const amount = Number(transaction.amount);
+
     const newTransaction = {
       ...transaction,
-      id: `tx-${Date.now()}`
+      id: `tx-${Date.now()}`,
+      amount,
     };
 
-    const updatedMonth = {
+    let updatedMonth = {
       ...month,
       transactions: [
         ...month.transactions,
-        newTransaction
-      ]
+        newTransaction,
+      ],
     };
 
+    /*
+     * Une dépense rattachée à une enveloppe
+     * augmente automatiquement son montant dépensé.
+     */
     if (transaction.type === "expense") {
-      updatedMonth.envelopes =
-        month.envelopes.map((envelope) => {
-          if (
-            envelope.name === transaction.category
-          ) {
-            return {
-              ...envelope,
-              spent:
-                envelope.spent +
-                Number(transaction.amount)
-            };
-          }
-
-          return envelope;
-        });
+      updatedMonth.envelopes = month.envelopes.map(
+        (envelope) =>
+          envelope.name === transaction.category
+            ? {
+                ...envelope,
+                spent:
+                  Number(envelope.spent || 0) +
+                  amount,
+              }
+            : envelope
+      );
     }
 
+    /*
+     * Un revenu ajouté apparaît également dans les revenus.
+     */
     if (transaction.type === "income") {
       updatedMonth.income = [
         ...month.income,
         {
           id: newTransaction.id,
           label: transaction.label,
-          planned: Number(transaction.amount),
-          actual: Number(transaction.amount)
-        }
+          planned: amount,
+          actual: amount,
+        },
       ];
     }
 
@@ -176,24 +296,26 @@ function App() {
       ...data,
       months: {
         ...data.months,
-        [data.currentMonth]: updatedMonth
-      }
+        [data.currentMonth]: updatedMonth,
+      },
     };
 
     saveData(newData);
     setShowAddModal(false);
   };
 
-  const navigate = (page) => {
-    setActivePage(page);
-  };
-
   return (
     <div className="app">
 
+      {/* ======================================================
+          HEADER
+      ====================================================== */}
+
       <header className="topbar">
+
         <div>
           <h1>Mon Budget</h1>
+
           <span className="subtitle">
             Pilotage financier personnel
           </span>
@@ -205,7 +327,12 @@ function App() {
         >
           <Settings size={20} />
         </button>
+
       </header>
+
+      {/* ======================================================
+          CONTENU
+      ====================================================== */}
 
       <main className="main">
 
@@ -213,10 +340,7 @@ function App() {
           <Dashboard
             month={currentMonth}
             totals={totals}
-            onAdd={() => {
-              setAddType("expense");
-              setShowAddModal(true);
-            }}
+            onAdd={() => setShowAddModal(true)}
           />
         )}
 
@@ -229,14 +353,14 @@ function App() {
 
         {activePage === "transactions" && (
           <Transactions
-            transactions={currentMonth.transactions}
+            transactions={
+              currentMonth.transactions
+            }
           />
         )}
 
         {activePage === "goals" && (
-          <Goals
-            goals={currentMonth.goals}
-          />
+          <Goals goals={currentMonth.goals} />
         )}
 
         {activePage === "analysis" && (
@@ -248,15 +372,21 @@ function App() {
 
       </main>
 
+      {/* ======================================================
+          BOUTON AJOUT
+      ====================================================== */}
+
       <button
         className="floating-button"
-        onClick={() => {
-          setAddType("expense");
-          setShowAddModal(true);
-        }}
+        onClick={() => setShowAddModal(true)}
+        aria-label="Ajouter"
       >
         <Plus size={25} />
       </button>
+
+      {/* ======================================================
+          NAVIGATION
+      ====================================================== */}
 
       <nav className="bottom-nav">
 
@@ -264,40 +394,57 @@ function App() {
           active={activePage === "dashboard"}
           icon={<LayoutDashboard size={21} />}
           label="Accueil"
-          onClick={() => navigate("dashboard")}
+          onClick={() =>
+            setActivePage("dashboard")
+          }
         />
 
         <NavButton
           active={activePage === "budget"}
           icon={<WalletCards size={21} />}
           label="Budget"
-          onClick={() => navigate("budget")}
+          onClick={() =>
+            setActivePage("budget")
+          }
         />
 
         <div className="nav-spacer" />
 
         <NavButton
-          active={activePage === "transactions"}
+          active={
+            activePage === "transactions"
+          }
           icon={<Receipt size={21} />}
           label="Dépenses"
-          onClick={() => navigate("transactions")}
+          onClick={() =>
+            setActivePage("transactions")
+          }
         />
 
         <NavButton
           active={activePage === "goals"}
           icon={<Target size={21} />}
           label="Objectifs"
-          onClick={() => navigate("goals")}
+          onClick={() =>
+            setActivePage("goals")
+          }
         />
 
       </nav>
 
+      {/* ======================================================
+          MODALE
+      ====================================================== */}
+
       {showAddModal && (
         <AddTransactionModal
-          type={addType}
-          onClose={() => setShowAddModal(false)}
+          onClose={() =>
+            setShowAddModal(false)
+          }
           onSave={addTransaction}
-          envelopes={currentMonth.envelopes}
+          envelopes={
+            currentMonth.envelopes
+          }
         />
       )}
 
@@ -305,11 +452,16 @@ function App() {
   );
 }
 
+
+/* ============================================================
+   NAVIGATION
+============================================================ */
+
 function NavButton({
   active,
   icon,
   label,
-  onClick
+  onClick,
 }) {
   return (
     <button
@@ -324,36 +476,66 @@ function NavButton({
   );
 }
 
+
+/* ============================================================
+   DASHBOARD
+============================================================ */
+
 function Dashboard({
   month,
   totals,
-  onAdd
+  onAdd,
 }) {
-  const alerts = month.envelopes.filter(
-    (item) =>
-      item.spent >= item.budget
-  );
+  const alerts =
+    month.envelopes.filter(
+      (item) =>
+        Number(item.budget || 0) > 0 &&
+        Number(item.spent || 0) >=
+          Number(item.budget || 0)
+    );
+
+  const hasNegativeAvailable =
+    totals.availableNow < 0;
+
+  const forecastIsNegative =
+    totals.forecastEnd < 0;
 
   return (
     <div className="page">
 
-      <MonthSelector label={month.label} />
+      <MonthSelector
+        label={month.label}
+      />
+
+      {/* ==================================================
+          INDICATEUR PRINCIPAL
+      ================================================== */}
 
       <section className="hero-card">
 
         <div>
-          <span>Reste disponible</span>
+
+          <span>
+            Disponible maintenant
+          </span>
 
           <strong>
-            {formatMoney(totals.remaining)}
+            {formatMoney(
+              totals.availableNow
+            )}
           </strong>
 
           <small>
-            Prévision fin de mois :{" "}
-            {formatMoney(
-              totals.plannedRemaining
-            )}
+            Si tu respectes encore ton budget,
+            il devrait rester{" "}
+            <b>
+              {formatMoney(
+                totals.forecastEnd
+              )}
+            </b>{" "}
+            en fin de mois.
           </small>
+
         </div>
 
         <div className="hero-icon">
@@ -362,132 +544,355 @@ function Dashboard({
 
       </section>
 
+
+      {/* ==================================================
+          INDICATEURS
+      ================================================== */}
+
       <section className="stats-grid">
 
         <StatCard
-          title="Revenus"
-          value={totals.incomeActual}
-          planned={totals.incomePlanned}
-          icon={<ArrowUp size={18} />}
+          title="Revenus encaissés"
+          value={
+            totals.incomeActual
+          }
+          planned={
+            totals.incomePlanned
+          }
+          icon={
+            <ArrowUp size={18} />
+          }
           positive
         />
 
         <StatCard
-          title="Dépenses"
-          value={totals.totalActualExpenses}
-          planned={
-            totals.fixedPlanned +
-            totals.envelopeBudget
+          title="Dépenses réelles"
+          value={
+            totals.actualExpenses
           }
-          icon={<ArrowDown size={18} />}
+          planned={
+            totals.plannedExpenses
+          }
+          icon={
+            <ArrowDown size={18} />
+          }
         />
 
         <StatCard
           title="Épargne"
-          value={totals.savings}
-          icon={<PiggyBank size={18} />}
+          value={
+            totals.savings
+          }
+          planned={
+            totals.savingsBudget
+          }
+          icon={
+            <PiggyBank size={18} />
+          }
           positive
         />
 
       </section>
 
+
+      {/* ==================================================
+          SYNTHÈSE
+      ================================================== */}
+
+      <section className="summary-card">
+
+        <div>
+          <span>
+            Disponible maintenant
+          </span>
+
+          <strong>
+            {formatMoney(
+              totals.availableNow
+            )}
+          </strong>
+        </div>
+
+        <div>
+          <span>
+            Encore à prévoir
+          </span>
+
+          <strong>
+            {formatMoney(
+              totals.envelopeRemaining
+            )}
+          </strong>
+        </div>
+
+        <div>
+          <span>
+            Dépassements
+          </span>
+
+          <strong
+            className={
+              totals.overBudget > 0
+                ? "danger-text"
+                : ""
+            }
+          >
+            {formatMoney(
+              totals.overBudget
+            )}
+          </strong>
+        </div>
+
+      </section>
+
+
+      {/* ==================================================
+          ENVELOPPES
+      ================================================== */}
+
       <SectionTitle
         title="Enveloppes"
-        action="Voir tout"
       />
 
       <div className="envelope-list">
 
-        {month.envelopes
-          .slice(0, 5)
-          .map((envelope) => (
+        {month.envelopes.map(
+          (envelope) => (
             <EnvelopeCard
               key={envelope.id}
               envelope={envelope}
             />
-          ))}
+          )
+        )}
 
       </div>
 
+
+      {/* ==================================================
+          ÉTAT DU MOIS
+      ================================================== */}
+
       <SectionTitle
-        title="Alertes"
-        action=""
+        title="État du mois"
       />
 
-      {alerts.length === 0 ? (
-        <div className="empty-card">
-          <CheckCircle2 size={20} />
-          <span>
-            Aucun dépassement détecté.
-          </span>
+      {hasNegativeAvailable ? (
+
+        <div className="alert-card">
+
+          <AlertTriangle size={21} />
+
+          <div>
+
+            <strong>
+              Situation déficitaire
+            </strong>
+
+            <p>
+              Les dépenses enregistrées
+              dépassent les revenus encaissés.
+            </p>
+
+          </div>
+
         </div>
+
+      ) : forecastIsNegative ? (
+
+        <div className="alert-card">
+
+          <AlertTriangle size={21} />
+
+          <div>
+
+            <strong>
+              Fin de mois sous tension
+            </strong>
+
+            <p>
+              Si tu dépenses tout ce qui reste
+              dans les enveloppes, le budget
+              prévisionnel devient négatif.
+            </p>
+
+          </div>
+
+        </div>
+
+      ) : totals.overBudget > 0 ? (
+
+        <div className="alert-card">
+
+          <AlertTriangle size={21} />
+
+          <div>
+
+            <strong>
+              Des enveloppes sont dépassées
+            </strong>
+
+            <p>
+              Total des dépassements :{" "}
+              {formatMoney(
+                totals.overBudget
+              )}
+            </p>
+
+          </div>
+
+        </div>
+
       ) : (
-        <div className="alert-list">
-          {alerts.map((envelope) => (
-            <div
-              className="alert-card"
-              key={envelope.id}
-            >
-              <AlertTriangle size={21} />
 
-              <div>
-                <strong>
-                  {envelope.name}
-                </strong>
+        <div className="empty-card">
 
-                <p>
-                  Budget dépassé de{" "}
-                  {formatMoney(
-                    envelope.spent -
-                      envelope.budget
-                  )}
-                </p>
-              </div>
-            </div>
-          ))}
+          <CheckCircle2 size={20} />
+
+          <span>
+            Situation maîtrisée :
+            aucun dépassement.
+          </span>
+
         </div>
+
       )}
+
+
+      {/* ==================================================
+          ALERTES ENVELOPPES
+      ================================================== */}
+
+      {alerts.length > 0 && (
+
+        <div
+          className="alert-list"
+          style={{
+            marginTop: 8,
+          }}
+        >
+
+          {alerts.map(
+            (envelope) => (
+
+              <div
+                className="alert-card"
+                key={envelope.id}
+              >
+
+                <AlertTriangle
+                  size={18}
+                />
+
+                <div>
+
+                  <strong>
+                    {envelope.name}
+                  </strong>
+
+                  <p>
+
+                    {Number(
+                      envelope.spent
+                    ) >
+                    Number(
+                      envelope.budget
+                    )
+                      ? `Dépassement de ${formatMoney(
+                          Number(
+                            envelope.spent
+                          ) -
+                            Number(
+                              envelope.budget
+                            )
+                        )}`
+                      : "Budget atteint."}
+
+                  </p>
+
+                </div>
+
+              </div>
+
+            )
+          )}
+
+        </div>
+
+      )}
+
+
+      {/* ==================================================
+          AJOUT
+      ================================================== */}
 
       <button
         className="primary-button full"
         onClick={onAdd}
       >
+
         <Plus size={19} />
+
         Ajouter une dépense
+
       </button>
 
     </div>
   );
 }
 
-function MonthSelector({ label }) {
+
+/* ============================================================
+   SÉLECTEUR DE MOIS
+============================================================ */
+
+function MonthSelector({
+  label,
+}) {
   return (
     <div className="month-selector">
-      <button>
+
+      <button
+        aria-label="Mois précédent"
+        disabled
+      >
         <ChevronLeft size={20} />
       </button>
 
-      <strong>{label}</strong>
+      <strong>
+        {label}
+      </strong>
 
-      <button>
+      <button
+        aria-label="Mois suivant"
+        disabled
+      >
         <ChevronRight size={20} />
       </button>
+
     </div>
   );
 }
+
+
+/* ============================================================
+   CARTE STATISTIQUE
+============================================================ */
 
 function StatCard({
   title,
   value,
   planned,
   icon,
-  positive
+  positive,
 }) {
   return (
     <div className="stat-card">
 
       <div className="stat-header">
-        <span>{title}</span>
+
+        <span>
+          {title}
+        </span>
 
         <div
           className={
@@ -498,6 +903,7 @@ function StatCard({
         >
           {icon}
         </div>
+
       </div>
 
       <strong>
@@ -506,7 +912,8 @@ function StatCard({
 
       {planned !== undefined && (
         <small>
-          Prévu : {formatMoney(planned)}
+          Prévu :{" "}
+          {formatMoney(planned)}
         </small>
       )}
 
@@ -514,13 +921,24 @@ function StatCard({
   );
 }
 
-function EnvelopeCard({ envelope }) {
+
+/* ============================================================
+   ENVELOPPE
+============================================================ */
+
+function EnvelopeCard({
+  envelope,
+}) {
+  const budget =
+    Number(envelope.budget || 0);
+
+  const spent =
+    Number(envelope.spent || 0);
+
   const percentage =
-    envelope.budget === 0
+    budget === 0
       ? 0
-      : (envelope.spent /
-          envelope.budget) *
-        100;
+      : (spent / budget) * 100;
 
   const status =
     percentage >= 100
@@ -528,6 +946,9 @@ function EnvelopeCard({ envelope }) {
       : percentage >= 80
       ? "warning"
       : "normal";
+
+  const difference =
+    budget - spent;
 
   return (
     <div className="envelope-card">
@@ -539,23 +960,28 @@ function EnvelopeCard({ envelope }) {
         </strong>
 
         <span>
-          {formatMoney(envelope.spent)}
+          {formatMoney(spent)}
           {" / "}
-          {formatMoney(envelope.budget)}
+          {formatMoney(budget)}
         </span>
 
       </div>
 
       <div className="progress">
+
         <div
           className={`progress-bar ${status}`}
           style={{
             width: `${Math.min(
-              percentage,
+              Math.max(
+                percentage,
+                0
+              ),
               100
-            )}%`
+            )}%`,
           }}
         />
+
       </div>
 
       <div className="envelope-bottom">
@@ -566,20 +992,22 @@ function EnvelopeCard({ envelope }) {
 
         <span
           className={
-            percentage >= 100
+            difference < 0
               ? "danger-text"
               : ""
           }
         >
-          {percentage >= 100
+
+          {difference < 0
             ? `+${formatMoney(
-                envelope.spent -
-                  envelope.budget
+                Math.abs(
+                  difference
+                )
               )}`
             : `Reste ${formatMoney(
-                envelope.budget -
-                  envelope.spent
+                difference
               )}`}
+
         </span>
 
       </div>
@@ -588,14 +1016,21 @@ function EnvelopeCard({ envelope }) {
   );
 }
 
+
+/* ============================================================
+   TITRE DE SECTION
+============================================================ */
+
 function SectionTitle({
   title,
-  action
+  action,
 }) {
   return (
     <div className="section-title">
 
-      <h2>{title}</h2>
+      <h2>
+        {title}
+      </h2>
 
       {action && (
         <button>
@@ -607,9 +1042,14 @@ function SectionTitle({
   );
 }
 
+
+/* ============================================================
+   PAGE BUDGET
+============================================================ */
+
 function Budget({
   month,
-  totals
+  totals,
 }) {
   return (
     <div className="page">
@@ -622,7 +1062,10 @@ function Budget({
       <section className="summary-card">
 
         <div>
-          <span>Revenus prévus</span>
+          <span>
+            Revenus prévus
+          </span>
+
           <strong>
             {formatMoney(
               totals.incomePlanned
@@ -631,7 +1074,10 @@ function Budget({
         </div>
 
         <div>
-          <span>Revenus réels</span>
+          <span>
+            Revenus réels
+          </span>
+
           <strong>
             {formatMoney(
               totals.incomeActual
@@ -640,15 +1086,19 @@ function Budget({
         </div>
 
         <div>
-          <span>Reste prévisionnel</span>
+          <span>
+            Disponible
+          </span>
+
           <strong>
             {formatMoney(
-              totals.plannedRemaining
+              totals.availableNow
             )}
           </strong>
         </div>
 
       </section>
+
 
       <SectionTitle
         title="Charges fixes"
@@ -658,15 +1108,18 @@ function Budget({
 
         {month.fixedExpenses.map(
           (expense) => (
+
             <div
               className="simple-row"
               key={expense.id}
             >
+
               <span>
                 {expense.label}
               </span>
 
               <div>
+
                 <strong>
                   {formatMoney(
                     expense.actual
@@ -679,12 +1132,16 @@ function Budget({
                     expense.planned
                   )}
                 </small>
+
               </div>
+
             </div>
+
           )
         )}
 
       </div>
+
 
       <SectionTitle
         title="Enveloppes"
@@ -694,15 +1151,18 @@ function Budget({
 
         {month.envelopes.map(
           (envelope) => (
+
             <div
               className="simple-row"
               key={envelope.id}
             >
+
               <span>
                 {envelope.name}
               </span>
 
               <div>
+
                 <strong>
                   {formatMoney(
                     envelope.spent
@@ -715,8 +1175,11 @@ function Budget({
                     envelope.budget
                   )}
                 </small>
+
               </div>
+
             </div>
+
           )
         )}
 
@@ -726,8 +1189,13 @@ function Budget({
   );
 }
 
+
+/* ============================================================
+   TRANSACTIONS
+============================================================ */
+
 function Transactions({
-  transactions
+  transactions,
 }) {
   return (
     <div className="page">
@@ -741,56 +1209,69 @@ function Transactions({
 
         {[...transactions]
           .reverse()
-          .map((transaction) => (
-            <div
-              className="transaction-card"
-              key={transaction.id}
-            >
+          .map(
+            (transaction) => (
 
-              <div className="transaction-icon">
-                {transaction.type ===
-                "expense" ? (
-                  <ArrowDown size={18} />
-                ) : (
-                  <ArrowUp size={18} />
-                )}
-              </div>
+              <div
+                className="transaction-card"
+                key={transaction.id}
+              >
 
-              <div className="transaction-info">
+                <div className="transaction-icon">
 
-                <strong>
-                  {transaction.label}
+                  {transaction.type ===
+                  "expense" ? (
+                    <ArrowDown
+                      size={18}
+                    />
+                  ) : (
+                    <ArrowUp
+                      size={18}
+                    />
+                  )}
+
+                </div>
+
+                <div className="transaction-info">
+
+                  <strong>
+                    {transaction.label}
+                  </strong>
+
+                  <span>
+                    {formatDate(
+                      transaction.date
+                    )}
+                    {" · "}
+                    {transaction.payment}
+                  </span>
+
+                </div>
+
+                <strong
+                  className={
+                    transaction.type ===
+                    "expense"
+                      ? "amount-expense"
+                      : "amount-income"
+                  }
+                >
+
+                  {transaction.type ===
+                  "expense"
+                    ? "-"
+                    : "+"}
+
+                  {formatMoney(
+                    transaction.amount
+                  )}
+
                 </strong>
 
-                <span>
-                  {formatDate(
-                    transaction.date
-                  )}
-                  {" · "}
-                  {transaction.payment}
-                </span>
-
               </div>
 
-              <strong
-                className={
-                  transaction.type ===
-                  "expense"
-                    ? "amount-expense"
-                    : "amount-income"
-                }
-              >
-                {transaction.type ===
-                "expense"
-                  ? "-"
-                  : "+"}
-                {formatMoney(
-                  transaction.amount
-                )}
-              </strong>
-
-            </div>
-          ))}
+            )
+          )}
 
       </div>
 
@@ -798,8 +1279,13 @@ function Transactions({
   );
 }
 
+
+/* ============================================================
+   OBJECTIFS
+============================================================ */
+
 function Goals({
-  goals
+  goals,
 }) {
   return (
     <div className="page">
@@ -829,6 +1315,7 @@ function Goals({
               <div className="goal-header">
 
                 <div>
+
                   <strong>
                     {goal.name}
                   </strong>
@@ -839,6 +1326,7 @@ function Goals({
                       goal.target
                     )}
                   </span>
+
                 </div>
 
                 <Target size={22} />
@@ -853,7 +1341,7 @@ function Goals({
                     width: `${Math.min(
                       percentage,
                       100
-                    )}%`
+                    )}%`,
                   }}
                 />
 
@@ -868,7 +1356,9 @@ function Goals({
                 </strong>
 
                 <span>
-                  {percentage.toFixed(0)} %
+                  {percentage.toFixed(
+                    0
+                  )} %
                 </span>
 
               </div>
@@ -902,16 +1392,34 @@ function Goals({
   );
 }
 
+
+/* ============================================================
+   ANALYSE
+============================================================ */
+
 function Analysis({
   month,
-  totals
+  totals,
 }) {
-  const expenseRatio =
-    totals.incomeActual === 0
-      ? 0
-      : (totals.totalActualExpenses /
-          totals.incomeActual) *
-        100;
+  const monitoredEnvelopes =
+    month.envelopes.filter(
+      (item) => {
+        const budget =
+          Number(
+            item.budget || 0
+          );
+
+        const spent =
+          Number(
+            item.spent || 0
+          );
+
+        return (
+          budget > 0 &&
+          spent / budget >= 0.8
+        );
+      }
+    );
 
   return (
     <div className="page">
@@ -928,15 +1436,19 @@ function Analysis({
         </h3>
 
         <strong>
-          {expenseRatio.toFixed(1)} %
+          {totals.expenseRate.toFixed(
+            1
+          )} %
         </strong>
 
         <p>
-          Part des revenus déjà consommée
-          par les dépenses.
+          Part des revenus encaissés
+          déjà consommée par les dépenses,
+          hors épargne.
         </p>
 
       </section>
+
 
       <section className="analysis-card">
 
@@ -945,7 +1457,10 @@ function Analysis({
         </h3>
 
         <div className="analysis-row">
-          <span>Revenus</span>
+          <span>
+            Revenus
+          </span>
+
           <strong>
             {formatMoney(
               totals.incomeActual
@@ -954,16 +1469,22 @@ function Analysis({
         </div>
 
         <div className="analysis-row">
-          <span>Dépenses</span>
+          <span>
+            Dépenses
+          </span>
+
           <strong>
             {formatMoney(
-              totals.totalActualExpenses
+              totals.actualExpenses
             )}
           </strong>
         </div>
 
         <div className="analysis-row">
-          <span>Épargne</span>
+          <span>
+            Épargne
+          </span>
+
           <strong>
             {formatMoney(
               totals.savings
@@ -971,16 +1492,32 @@ function Analysis({
           </strong>
         </div>
 
-        <div className="analysis-row total">
-          <span>Reste</span>
+        <div className="analysis-row">
+          <span>
+            Disponible maintenant
+          </span>
+
           <strong>
             {formatMoney(
-              totals.remaining
+              totals.availableNow
+            )}
+          </strong>
+        </div>
+
+        <div className="analysis-row total">
+          <span>
+            Prévision fin de mois
+          </span>
+
+          <strong>
+            {formatMoney(
+              totals.forecastEnd
             )}
           </strong>
         </div>
 
       </section>
+
 
       <section className="analysis-card">
 
@@ -988,30 +1525,57 @@ function Analysis({
           Enveloppes à surveiller
         </h3>
 
-        {month.envelopes
-          .filter(
-            (item) =>
-              item.spent /
-                item.budget >=
-              0.8
-          )
-          .map((item) => (
-            <div
-              className="analysis-row"
-              key={item.id}
-            >
-              <span>{item.name}</span>
+        {monitoredEnvelopes.length ===
+        0 ? (
 
-              <strong>
-                {(
-                  (item.spent /
-                    item.budget) *
-                  100
-                ).toFixed(0)}
-                %
-              </strong>
-            </div>
-          ))}
+          <div className="empty-card">
+
+            <CheckCircle2 size={20} />
+
+            <span>
+              Aucune enveloppe à surveiller.
+            </span>
+
+          </div>
+
+        ) : (
+
+          monitoredEnvelopes.map(
+            (item) => {
+
+              const budget =
+                Number(
+                  item.budget || 0
+                );
+
+              const spent =
+                Number(
+                  item.spent || 0
+                );
+
+              return (
+                <div
+                  className="analysis-row"
+                  key={item.id}
+                >
+
+                  <span>
+                    {item.name}
+                  </span>
+
+                  <strong>
+                    {(
+                      (spent / budget) *
+                      100
+                    ).toFixed(0)}
+                    %
+                  </strong>
+
+                </div>
+              );
+            }
+          )
+        )}
 
       </section>
 
@@ -1019,54 +1583,79 @@ function Analysis({
   );
 }
 
+
+/* ============================================================
+   TITRE DE PAGE
+============================================================ */
+
 function PageTitle({
   title,
-  subtitle
+  subtitle,
 }) {
   return (
     <div className="page-title">
 
-      <h2>{title}</h2>
+      <h2>
+        {title}
+      </h2>
 
-      <p>{subtitle}</p>
+      <p>
+        {subtitle}
+      </p>
 
     </div>
   );
 }
 
+
+/* ============================================================
+   MODALE AJOUT DÉPENSE
+============================================================ */
+
 function AddTransactionModal({
-  type,
   onClose,
   onSave,
-  envelopes
+  envelopes,
 }) {
-  const [form, setForm] = useState({
-    label: "",
-    amount: "",
-    category:
-      envelopes[0]?.name ||
-      "Autre",
-    payment: "Carte bancaire",
-    date:
-      new Date()
-        .toISOString()
-        .split("T")[0]
-  });
+  const availableEnvelopes =
+    envelopes.filter(
+      (item) =>
+        item.name !== "Épargne"
+    );
+
+  const [form, setForm] =
+    useState({
+      label: "",
+      amount: "",
+      category:
+        availableEnvelopes[0]
+          ?.name ||
+        envelopes[0]?.name ||
+        "Autre",
+      payment:
+        "Carte bancaire",
+      date:
+        new Date()
+          .toISOString()
+          .split("T")[0],
+    });
 
   const submit = (event) => {
     event.preventDefault();
 
     if (
       !form.label ||
-      !form.amount
+      !form.amount ||
+      Number(form.amount) <= 0
     ) {
       return;
     }
 
     onSave({
       ...form,
-      type,
-      amount: Number(form.amount)
+      type: "expense",
+      amount:
+        Number(form.amount),
     });
   };
 
@@ -1086,6 +1675,7 @@ function AddTransactionModal({
         <div className="modal-header">
 
           <div>
+
             <h2>
               Nouvelle dépense
             </h2>
@@ -1093,20 +1683,24 @@ function AddTransactionModal({
             <span>
               Enregistrer un mouvement
             </span>
+
           </div>
 
           <button
             className="icon-button"
             onClick={onClose}
+            type="button"
           >
             <X size={21} />
           </button>
 
         </div>
 
+
         <form onSubmit={submit}>
 
           <label>
+
             Libellé
 
             <input
@@ -1114,50 +1708,65 @@ function AddTransactionModal({
               onChange={(e) =>
                 setForm({
                   ...form,
-                  label: e.target.value
+                  label:
+                    e.target.value,
                 })
               }
               placeholder="Ex : Carrefour"
               autoFocus
             />
+
           </label>
 
+
           <label>
+
             Montant
 
             <input
               type="number"
               step="0.01"
+              min="0"
               value={form.amount}
               onChange={(e) =>
                 setForm({
                   ...form,
-                  amount: e.target.value
+                  amount:
+                    e.target.value,
                 })
               }
               placeholder="0,00"
             />
+
           </label>
 
+
           <label>
+
             Catégorie
 
             <select
-              value={form.category}
+              value={
+                form.category
+              }
               onChange={(e) =>
                 setForm({
                   ...form,
                   category:
-                    e.target.value
+                    e.target.value,
                 })
               }
             >
 
-              {envelopes.map(
+              {availableEnvelopes.map(
                 (envelope) => (
                   <option
-                    key={envelope.id}
-                    value={envelope.name}
+                    key={
+                      envelope.id
+                    }
+                    value={
+                      envelope.name
+                    }
                   >
                     {envelope.name}
                   </option>
@@ -1172,19 +1781,24 @@ function AddTransactionModal({
 
           </label>
 
+
           <label>
+
             Moyen de paiement
 
             <select
-              value={form.payment}
+              value={
+                form.payment
+              }
               onChange={(e) =>
                 setForm({
                   ...form,
                   payment:
-                    e.target.value
+                    e.target.value,
                 })
               }
             >
+
               <option>
                 Carte bancaire
               </option>
@@ -1208,11 +1822,14 @@ function AddTransactionModal({
               <option>
                 Chèque
               </option>
+
             </select>
 
           </label>
 
+
           <label>
+
             Date
 
             <input
@@ -1221,12 +1838,14 @@ function AddTransactionModal({
               onChange={(e) =>
                 setForm({
                   ...form,
-                  date: e.target.value
+                  date:
+                    e.target.value,
                 })
               }
             />
 
           </label>
+
 
           <button
             className="primary-button full"
